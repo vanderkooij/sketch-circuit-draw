@@ -1,3 +1,4 @@
+import type React from 'react';
 import type { Tool } from './types';
 
 interface ToolbarProps {
@@ -44,7 +45,7 @@ function VoltageVarIcon({ size = 18 }: { size?: number }) {
   );
 }
 
-const tools: { id: Tool; label: string; icon: string | JSX.Element }[] = [
+const tools: { id: Tool; label: string; icon: string | React.ReactNode }[] = [
   { id: 'select', label: 'Select', icon: '⇱' },
   { id: 'voltage', label: 'Voltage Source', icon: <VoltageIcon /> },
   { id: 'voltage_var', label: 'Variable Source', icon: <VoltageVarIcon /> },
