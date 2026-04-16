@@ -34,13 +34,52 @@ function drawVoltageSource(ctx: CanvasRenderingContext2D, c: CircuitComponent, s
   ctx.lineTo(GRID * 0.5, GRID * 0.7);
   ctx.stroke();
 
+  // + and - labels
+  ctx.fillStyle = selected ? '#555' : '#000';
+  ctx.font = '10px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'bottom';
+  ctx.fillText('+', GRID * 0.5, -GRID * 0.8);
+  ctx.fillText('−', -GRID * 0.5, -GRID * 0.5);
+
   if (selected) {
     ctx.strokeStyle = '#999';
     ctx.lineWidth = 0.5;
     ctx.setLineDash([3, 3]);
-    ctx.strokeRect(-GRID * 2.2, -GRID, GRID * 4.4, GRID * 2);
+    ctx.strokeRect(-GRID * 2.2, -GRID * 1.2, GRID * 4.4, GRID * 2.4);
     ctx.setLineDash([]);
   }
+
+  ctx.restore();
+}
+
+function drawVariableVoltageSource(ctx: CanvasRenderingContext2D, c: CircuitComponent, selected: boolean) {
+  // Draw base voltage source first
+  drawVoltageSource(ctx, c, selected);
+
+  // Add diagonal arrow for "variable"
+  ctx.save();
+  ctx.translate(c.x, c.y);
+  ctx.rotate((c.rotation * Math.PI) / 180);
+  ctx.strokeStyle = selected ? '#555' : '#000';
+  ctx.lineWidth = 1.2;
+  ctx.lineCap = 'round';
+
+  ctx.beginPath();
+  ctx.moveTo(-GRID * 1.2, GRID * 0.8);
+  ctx.lineTo(GRID * 1.2, -GRID * 0.8);
+  ctx.stroke();
+
+  // Arrowhead
+  const ax = GRID * 1.2, ay = -GRID * 0.8;
+  const angle = Math.atan2(-GRID * 0.8 - GRID * 0.8, GRID * 1.2 - (-GRID * 1.2));
+  const hl = 5;
+  ctx.beginPath();
+  ctx.moveTo(ax, ay);
+  ctx.lineTo(ax - hl * Math.cos(angle - 0.4), ay - hl * Math.sin(angle - 0.4));
+  ctx.moveTo(ax, ay);
+  ctx.lineTo(ax - hl * Math.cos(angle + 0.4), ay - hl * Math.sin(angle + 0.4));
+  ctx.stroke();
 
   ctx.restore();
 }
@@ -53,7 +92,6 @@ function drawResistor(ctx: CanvasRenderingContext2D, c: CircuitComponent, select
   ctx.lineWidth = selected ? 2.5 : 1.5;
   ctx.lineCap = 'round';
 
-  // Connection lines
   ctx.beginPath();
   ctx.moveTo(-GRID * 2, 0);
   ctx.lineTo(-GRID, 0);
@@ -61,23 +99,157 @@ function drawResistor(ctx: CanvasRenderingContext2D, c: CircuitComponent, select
   ctx.lineTo(GRID * 2, 0);
   ctx.stroke();
 
-  // Rectangle body
   ctx.strokeRect(-GRID, -GRID * 0.4, GRID * 2, GRID * 0.8);
 
-  if (selected) {
-    ctx.strokeStyle = '#999';
-    ctx.lineWidth = 0.5;
-    ctx.setLineDash([3, 3]);
-    ctx.strokeRect(-GRID * 2.2, -GRID * 0.7, GRID * 4.4, GRID * 1.4);
-    ctx.setLineDash([]);
-  }
-
+  if (selected) drawSelectionBox(ctx, GRID * 2.2, GRID * 0.7);
   ctx.restore();
 }
 
+function drawLED(ctx: CanvasRenderingContext2D, c: CircuitComponent, selected: boolean) {
+  ctx.save();
+  ctx.translate(c.x, c.y);
+  ctx.rotate((c.rotation * Math.PI) / 180);
+  ctx.strokeStyle = selected ? '#555' : '#000';
+  ctx.fillStyle = 'transparent';
+  ctx.lineWidth = selected ? 2.5 : 1.5;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  // Connection lines
+  ctx.beginPath();
+  ctx.moveTo(-GRID * 2, 0);
+  ctx.lineTo(-GRID * 0.6, 0);
+  ctx.moveTo(GRID * 0.6, 0);
+  ctx.lineTo(GRID * 2, 0);
+  ctx.stroke();
+
+  // Triangle (diode)
+  ctx.beginPath();
+  ctx.moveTo(-GRID * 0.6, -GRID * 0.6);
+  ctx.lineTo(-GRID * 0.6, GRID * 0.6);
+  ctx.lineTo(GRID * 0.6, 0);
+  ctx.closePath();
+  ctx.stroke();
+
+  // Cathode line
+  ctx.beginPath();
+  ctx.moveTo(GRID * 0.6, -GRID * 0.6);
+  ctx.lineTo(GRID * 0.6, GRID * 0.6);
+  ctx.stroke();
+
+  // Light arrows
+  ctx.lineWidth = 1;
+  const arrowStart = GRID * 0.3;
+  for (const dy of [-GRID * 0.6, -GRID * 0.9]) {
+    ctx.beginPath();
+    ctx.moveTo(arrowStart, dy);
+    ctx.lineTo(arrowStart + GRID * 0.5, dy - GRID * 0.3);
+    ctx.stroke();
+    // Small arrowhead
+    ctx.beginPath();
+    ctx.moveTo(arrowStart + GRID * 0.5, dy - GRID * 0.3);
+    ctx.lineTo(arrowStart + GRID * 0.3, dy - GRID * 0.2);
+    ctx.moveTo(arrowStart + GRID * 0.5, dy - GRID * 0.3);
+    ctx.lineTo(arrowStart + GRID * 0.4, dy - GRID * 0.1);
+    ctx.stroke();
+  }
+
+  if (selected) drawSelectionBox(ctx, GRID * 2.2, GRID * 1.1);
+  ctx.restore();
+}
+
+function drawMotor(ctx: CanvasRenderingContext2D, c: CircuitComponent, selected: boolean) {
+  ctx.save();
+  ctx.translate(c.x, c.y);
+  ctx.rotate((c.rotation * Math.PI) / 180);
+  ctx.strokeStyle = selected ? '#555' : '#000';
+  ctx.lineWidth = selected ? 2.5 : 1.5;
+  ctx.lineCap = 'round';
+
+  const r = GRID * 0.7;
+
+  // Connection lines
+  ctx.beginPath();
+  ctx.moveTo(-GRID * 2, 0);
+  ctx.lineTo(-r, 0);
+  ctx.moveTo(r, 0);
+  ctx.lineTo(GRID * 2, 0);
+  ctx.stroke();
+
+  // Circle
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // M label
+  ctx.fillStyle = selected ? '#555' : '#000';
+  ctx.font = 'bold 12px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  // Counter-rotate text so it stays readable
+  ctx.rotate((-c.rotation * Math.PI) / 180);
+  ctx.fillText('M', 0, 0);
+
+  if (selected) {
+    ctx.rotate((c.rotation * Math.PI) / 180);
+    drawSelectionBox(ctx, GRID * 2.2, GRID);
+  }
+  ctx.restore();
+}
+
+function drawLamp(ctx: CanvasRenderingContext2D, c: CircuitComponent, selected: boolean) {
+  ctx.save();
+  ctx.translate(c.x, c.y);
+  ctx.rotate((c.rotation * Math.PI) / 180);
+  ctx.strokeStyle = selected ? '#555' : '#000';
+  ctx.lineWidth = selected ? 2.5 : 1.5;
+  ctx.lineCap = 'round';
+
+  const r = GRID * 0.7;
+
+  // Connection lines
+  ctx.beginPath();
+  ctx.moveTo(-GRID * 2, 0);
+  ctx.lineTo(-r, 0);
+  ctx.moveTo(r, 0);
+  ctx.lineTo(GRID * 2, 0);
+  ctx.stroke();
+
+  // Circle
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // X inside (cross)
+  const d = r * 0.55;
+  ctx.beginPath();
+  ctx.moveTo(-d, -d);
+  ctx.lineTo(d, d);
+  ctx.moveTo(d, -d);
+  ctx.lineTo(-d, d);
+  ctx.stroke();
+
+  if (selected) drawSelectionBox(ctx, GRID * 2.2, GRID);
+  ctx.restore();
+}
+
+function drawSelectionBox(ctx: CanvasRenderingContext2D, hw: number, hh: number) {
+  ctx.strokeStyle = '#999';
+  ctx.lineWidth = 0.5;
+  ctx.setLineDash([3, 3]);
+  ctx.strokeRect(-hw, -hh, hw * 2, hh * 2);
+  ctx.setLineDash([]);
+}
+
 export function drawComponent(ctx: CanvasRenderingContext2D, c: CircuitComponent, selected: boolean) {
-  if (c.type === 'voltage') drawVoltageSource(ctx, c, selected);
-  else drawResistor(ctx, c, selected);
+  switch (c.type) {
+    case 'voltage': return drawVoltageSource(ctx, c, selected);
+    case 'voltage_var': return drawVariableVoltageSource(ctx, c, selected);
+    case 'resistor': return drawResistor(ctx, c, selected);
+    case 'led': return drawLED(ctx, c, selected);
+    case 'motor': return drawMotor(ctx, c, selected);
+    case 'lamp': return drawLamp(ctx, c, selected);
+  }
 }
 
 export function drawWire(ctx: CanvasRenderingContext2D, w: Wire, selected: boolean, selectedNode: number | null) {
@@ -94,7 +266,6 @@ export function drawWire(ctx: CanvasRenderingContext2D, w: Wire, selected: boole
   }
   ctx.stroke();
 
-  // Draw nodes when selected
   if (selected) {
     w.nodes.forEach((n, i) => {
       ctx.fillStyle = selectedNode === i ? '#000' : '#fff';
@@ -132,13 +303,11 @@ export function drawPreviewWire(ctx: CanvasRenderingContext2D, nodes: Point[], c
   ctx.setLineDash([4, 4]);
   ctx.beginPath();
   ctx.moveTo(last.x, last.y);
-  // Orthogonal routing: horizontal then vertical
   ctx.lineTo(cursor.x, last.y);
   ctx.lineTo(cursor.x, cursor.y);
   ctx.stroke();
   ctx.setLineDash([]);
 
-  // Draw existing preview segments
   if (nodes.length >= 2) {
     ctx.strokeStyle = '#000';
     ctx.lineWidth = 1.5;
@@ -154,8 +323,7 @@ export function drawPreviewWire(ctx: CanvasRenderingContext2D, nodes: Point[], c
 
 export function hitTestComponent(c: CircuitComponent, p: Point): boolean {
   const dx = GRID * 2.2;
-  const dy = GRID;
-  // Transform point into component-local space
+  const dy = GRID * 1.2;
   const cos = Math.cos((-c.rotation * Math.PI) / 180);
   const sin = Math.sin((-c.rotation * Math.PI) / 180);
   const lx = (p.x - c.x) * cos - (p.y - c.y) * sin;
