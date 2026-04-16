@@ -180,8 +180,8 @@ export default function CircuitEditor() {
     const sp = snapPoint(p);
     const ctx = canvasRef.current!.getContext('2d')!;
 
-    if (tool === 'voltage' || tool === 'resistor') {
-      const comp: CircuitComponent = { id: uid(), type: tool, x: sp.x, y: sp.y, rotation: 0 };
+    if (['voltage', 'voltage_var', 'resistor', 'led', 'motor', 'lamp'].includes(tool)) {
+      const comp: CircuitComponent = { id: uid(), type: tool as CircuitComponent['type'], x: sp.x, y: sp.y, rotation: 0 };
       commit({ ...state, components: [...state.components, comp] });
       return;
     }

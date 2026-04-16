@@ -1,6 +1,8 @@
 export const GRID = 20;
 
-export type Tool = 'select' | 'voltage' | 'resistor' | 'wire' | 'text' | 'delete';
+export type Tool = 'select' | 'voltage' | 'voltage_var' | 'resistor' | 'led' | 'motor' | 'lamp' | 'wire' | 'text' | 'delete';
+
+export type ComponentType = 'voltage' | 'voltage_var' | 'resistor' | 'led' | 'motor' | 'lamp';
 
 export interface Point {
   x: number;
@@ -9,7 +11,7 @@ export interface Point {
 
 export interface CircuitComponent {
   id: string;
-  type: 'voltage' | 'resistor';
+  type: ComponentType;
   x: number;
   y: number;
   rotation: 0 | 90 | 180 | 270;
