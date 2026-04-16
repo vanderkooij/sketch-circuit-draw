@@ -408,25 +408,57 @@ export default function CircuitEditor() {
         onContextMenu={handleContextMenu}
       />
       {editingLabel && (
-        <input
-          autoFocus
-          value={editText}
-          onChange={e => setEditText(e.target.value)}
-          onBlur={finishLabelEdit}
-          onKeyDown={e => { if (e.key === 'Enter') finishLabelEdit(); if (e.key === 'Escape') { setEditingLabel(null); } }}
+        <div
           style={{
             position: 'absolute',
             left: editPos.x + pan.x,
-            top: editPos.y + pan.y - 10,
-            font: '14px "SF Mono", "Fira Code", monospace',
-            border: '1px solid #000',
-            outline: 'none',
-            background: '#fff',
-            padding: '2px 4px',
-            minWidth: 60,
+            top: editPos.y + pan.y + 44 - 10,
+            zIndex: 20,
           }}
-          placeholder="R₁, U₂..."
-        />
+        >
+          <input
+            autoFocus
+            value={editText}
+            onChange={e => setEditText(e.target.value)}
+            onBlur={() => setTimeout(finishLabelEdit, 150)}
+            onKeyDown={e => { if (e.key === 'Enter') finishLabelEdit(); if (e.key === 'Escape') { setEditingLabel(null); } }}
+            style={{
+              font: '14px "SF Mono", "Fira Code", monospace',
+              border: '1px solid #000',
+              outline: 'none',
+              background: '#fff',
+              padding: '4px 8px',
+              minWidth: 120,
+              display: 'block',
+            }}
+            placeholder="R₁, U₂, Ω..."
+          />
+          <div style={{
+            marginTop: 4, background: '#fff', border: '1px solid #e0e0e0',
+            borderRadius: 4, padding: '6px 8px', fontSize: 11, color: '#888',
+            fontFamily: 'monospace', lineHeight: 1.6, whiteSpace: 'pre-wrap',
+          }}>
+            <div style={{ marginBottom: 4, color: '#555', fontWeight: 600 }}>Quick insert:</div>
+            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+              {['₀','₁','₂','₃','₄','₅','₆','₇','₈','₉'].map(s => (
+                <button key={s} onMouseDown={e => { e.preventDefault(); setEditText(t => t + s); }}
+                  style={{ width: 24, height: 24, border: '1px solid #ddd', borderRadius: 3,
+                    background: '#fafafa', cursor: 'pointer', fontSize: 13, fontFamily: 'monospace' }}>
+                  {s}
+                </button>
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
+              {['Ω','Δ','μ','π','±','·','→','∞','≈','°'].map(s => (
+                <button key={s} onMouseDown={e => { e.preventDefault(); setEditText(t => t + s); }}
+                  style={{ width: 24, height: 24, border: '1px solid #ddd', borderRadius: 3,
+                    background: '#fafafa', cursor: 'pointer', fontSize: 13, fontFamily: 'monospace' }}>
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
       )}
       <div style={{
         position: 'absolute', bottom: 8, right: 12,
