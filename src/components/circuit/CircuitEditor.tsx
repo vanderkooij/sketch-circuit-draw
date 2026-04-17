@@ -10,6 +10,38 @@ import { Toolbar } from './Toolbar';
 
 const EMPTY: CircuitState = { components: [], wires: [], labels: [] };
 
+const TERMINAL_SNAP = 12;
+
+// Reconcile wire endpoints with their attached components' current positions
+function syncWires(s: CircuitState): CircuitState {
+  const byId = new Map(s.components.map(c => [c.id, c]));
+  let changed = false;
+  const wires = s.wires.map(w => {
+    const newNodes = [...w.nodes];
+    if (w.startAttach) {
+      const c = byId.get(w.startAttach.componentId);
+      if (c) {
+        const p = getTerminal(c, w.startAttach.terminal);
+        if (newNodes[0]?.x !== p.x || newNodes[0]?.y !== p.y) {
+          newNodes[0] = p; changed = true;
+        }
+      }
+    }
+    if (w.endAttach) {
+      const c = byId.get(w.endAttach.componentId);
+      if (c) {
+        const p = getTerminal(c, w.endAttach.terminal);
+        const li = newNodes.length - 1;
+        if (newNodes[li]?.x !== p.x || newNodes[li]?.y !== p.y) {
+          newNodes[li] = p; changed = true;
+        }
+      }
+    }
+    return changed ? { ...w, nodes: newNodes } : w;
+  });
+  return changed ? { ...s, wires } : s;
+}
+
 type Selection =
   | { kind: 'component'; id: string }
   | { kind: 'wire'; id: string; node: number | null }
