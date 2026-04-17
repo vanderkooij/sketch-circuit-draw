@@ -220,7 +220,10 @@ export default function CircuitEditor() {
     }
 
     if (tool === 'wire') {
-      setWireNodes(prev => [...prev, sp]);
+      // Snap to a component terminal if close
+      const term = findTerminalNear(state.components, p, TERMINAL_SNAP);
+      const node = term ? term.point : sp;
+      setWireNodes(prev => [...prev, node]);
       return;
     }
 
