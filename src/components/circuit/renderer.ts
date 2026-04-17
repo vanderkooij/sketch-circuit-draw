@@ -331,6 +331,33 @@ export function hitTestComponent(c: CircuitComponent, p: Point): boolean {
   return Math.abs(lx) <= dx && Math.abs(ly) <= dy;
 }
 
+// Returns world-space coordinates of the two terminals (left=0, right=1) of a component
+export function getTerminal(c: CircuitComponent, terminal: 0 | 1): Point {
+  const localX = terminal === 0 ? -GRID * 2 : GRID * 2;
+  const cos = Math.cos((c.rotation * Math.PI) / 180);
+  const sin = Math.sin((c.rotation * Math.PI) / 180);
+  return { x: c.x + localX * cos, y: c.y + localX * sin };
+}
+
+// Find the nearest component terminal within tolerance of point p
+export function findTerminalNear(
+  components: CircuitComponent[],
+  p: Point,
+  tolerance: number,
+): { componentId: string; terminal: 0 | 1; point: Point } | null {
+  let best: { componentId: string; terminal: 0 | 1; point: Point; d: number } | null = null;
+  for (const c of components) {
+    for (const t of [0, 1] as const) {
+      const tp = getTerminal(c, t);
+      const d = Math.hypot(tp.x - p.x, tp.y - p.y);
+      if (d <= tolerance && (!best || d < best.d)) {
+        best = { componentId: c.id, terminal: t, point: tp, d };
+      }
+    }
+  }
+  return best ? { componentId: best.componentId, terminal: best.terminal, point: best.point } : null;
+}
+
 export function hitTestWire(w: Wire, p: Point): boolean {
   for (let i = 0; i < w.nodes.length - 1; i++) {
     if (distToSegment(p, w.nodes[i], w.nodes[i + 1]) < 8) return true;

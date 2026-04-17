@@ -4,10 +4,43 @@ import { GRID, snap, snapPoint, uid } from './types';
 import {
   clearCanvas, drawComponent, drawWire, drawLabel, drawPreviewWire,
   hitTestComponent, hitTestWire, hitTestWireNode, hitTestLabel,
+  getTerminal, findTerminalNear,
 } from './renderer';
 import { Toolbar } from './Toolbar';
 
 const EMPTY: CircuitState = { components: [], wires: [], labels: [] };
+
+const TERMINAL_SNAP = 12;
+
+// Reconcile wire endpoints with their attached components' current positions
+function syncWires(s: CircuitState): CircuitState {
+  const byId = new Map(s.components.map(c => [c.id, c]));
+  let changed = false;
+  const wires = s.wires.map(w => {
+    const newNodes = [...w.nodes];
+    if (w.startAttach) {
+      const c = byId.get(w.startAttach.componentId);
+      if (c) {
+        const p = getTerminal(c, w.startAttach.terminal);
+        if (newNodes[0]?.x !== p.x || newNodes[0]?.y !== p.y) {
+          newNodes[0] = p; changed = true;
+        }
+      }
+    }
+    if (w.endAttach) {
+      const c = byId.get(w.endAttach.componentId);
+      if (c) {
+        const p = getTerminal(c, w.endAttach.terminal);
+        const li = newNodes.length - 1;
+        if (newNodes[li]?.x !== p.x || newNodes[li]?.y !== p.y) {
+          newNodes[li] = p; changed = true;
+        }
+      }
+    }
+    return changed ? { ...w, nodes: newNodes } : w;
+  });
+  return changed ? { ...s, wires } : s;
+}
 
 type Selection =
   | { kind: 'component'; id: string }
@@ -158,12 +191,12 @@ export default function CircuitEditor() {
 
   const rotateSelection = useCallback(() => {
     if (selection?.kind !== 'component') return;
-    const next = {
+    const next = syncWires({
       ...state,
       components: state.components.map(c =>
         c.id === selection.id ? { ...c, rotation: ((c.rotation + 90) % 360) as 0 | 90 | 180 | 270 } : c
       ),
-    };
+    });
     commit(next);
   }, [selection, state, commit]);
 
@@ -187,7 +220,10 @@ export default function CircuitEditor() {
     }
 
     if (tool === 'wire') {
-      setWireNodes(prev => [...prev, sp]);
+      // Snap to a component terminal if close
+      const term = findTerminalNear(state.components, p, TERMINAL_SNAP);
+      const node = term ? term.point : sp;
+      setWireNodes(prev => [...prev, node]);
       return;
     }
 
@@ -273,20 +309,26 @@ export default function CircuitEditor() {
     const sp = snapPoint(p);
 
     if (selection.kind === 'component') {
-      setState(prev => ({
+      setState(prev => syncWires({
         ...prev,
         components: prev.components.map(c =>
           c.id === selection.id ? { ...c, x: snap(p.x - dragOffset.x), y: snap(p.y - dragOffset.y) } : c
         ),
       }));
     } else if (selection.kind === 'wire' && selection.node !== null) {
+      const term = findTerminalNear(state.components, p, TERMINAL_SNAP);
+      const newPos = term ? term.point : sp;
       setState(prev => ({
         ...prev,
-        wires: prev.wires.map(w =>
-          w.id === selection.id
-            ? { ...w, nodes: w.nodes.map((n, i) => (i === selection.node ? sp : n)) }
-            : w
-        ),
+        wires: prev.wires.map(w => {
+          if (w.id !== selection.id) return w;
+          const isStart = selection.node === 0;
+          const isEnd = selection.node === w.nodes.length - 1;
+          let next: Wire = { ...w, nodes: w.nodes.map((n, i) => (i === selection.node ? newPos : n)) };
+          if (isStart) next = { ...next, startAttach: term ? { componentId: term.componentId, terminal: term.terminal } : undefined };
+          if (isEnd) next = { ...next, endAttach: term ? { componentId: term.componentId, terminal: term.terminal } : undefined };
+          return next;
+        }),
       }));
     } else if (selection.kind === 'label') {
       setState(prev => ({
@@ -362,7 +404,17 @@ export default function CircuitEditor() {
   // Finalize wire on double-click when in wire mode
   const finishWire = useCallback(() => {
     if (wireNodes.length >= 2) {
-      const wire: Wire = { id: uid(), nodes: [...wireNodes] };
+      const startTerm = findTerminalNear(state.components, wireNodes[0], TERMINAL_SNAP);
+      const endTerm = findTerminalNear(state.components, wireNodes[wireNodes.length - 1], TERMINAL_SNAP);
+      const nodes = [...wireNodes];
+      if (startTerm) nodes[0] = startTerm.point;
+      if (endTerm) nodes[nodes.length - 1] = endTerm.point;
+      const wire: Wire = {
+        id: uid(),
+        nodes,
+        startAttach: startTerm ? { componentId: startTerm.componentId, terminal: startTerm.terminal } : undefined,
+        endAttach: endTerm ? { componentId: endTerm.componentId, terminal: endTerm.terminal } : undefined,
+      };
       commit({ ...state, wires: [...state.wires, wire] });
     }
     setWireNodes([]);
@@ -440,7 +492,7 @@ export default function CircuitEditor() {
           }}>
             <div style={{ marginBottom: 4, color: '#555', fontWeight: 600 }}>Quick insert:</div>
             <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-              {['₀','₁','₂','₃','₄','₅','₆','₇','₈','₉'].map(s => (
+              {['₀','₁','₂','₃','₄','₅','₆','₇','₈','₉','ₜ','ᵥ'].map(s => (
                 <button key={s} onMouseDown={e => { e.preventDefault(); setEditText(t => t + s); }}
                   style={{ width: 24, height: 24, border: '1px solid #ddd', borderRadius: 3,
                     background: '#fafafa', cursor: 'pointer', fontSize: 13, fontFamily: 'monospace' }}>
