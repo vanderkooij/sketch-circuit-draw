@@ -191,12 +191,12 @@ export default function CircuitEditor() {
 
   const rotateSelection = useCallback(() => {
     if (selection?.kind !== 'component') return;
-    const next = {
+    const next = syncWires({
       ...state,
       components: state.components.map(c =>
         c.id === selection.id ? { ...c, rotation: ((c.rotation + 90) % 360) as 0 | 90 | 180 | 270 } : c
       ),
-    };
+    });
     commit(next);
   }, [selection, state, commit]);
 
