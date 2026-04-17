@@ -1,45 +1,64 @@
 import { useRef, useState, useCallback, useEffect } from 'react';
-import type { CircuitState, Tool, Point, CircuitComponent, Wire, TextLabel } from './types';
-import { GRID, snap, snapPoint, uid } from './types';
+import type { CircuitState, Tool, Point, CircuitComponent, Wire, TextLabel, WireAttachment, ComponentType } from './types';
+import { GRID, snap, snapPoint, uid, orthogonalRoute } from './types';
 import {
-  clearCanvas, drawComponent, drawWire, drawLabel, drawPreviewWire,
+  clearCanvas, drawComponent, drawWire, drawLabel, drawPreviewWire, drawSnapHint,
   hitTestComponent, hitTestWire, hitTestWireNode, hitTestLabel,
-  getTerminal, findTerminalNear,
+  getTerminal, findSnapTarget,
 } from './renderer';
 import { Toolbar } from './Toolbar';
 
 const EMPTY: CircuitState = { components: [], wires: [], labels: [] };
 
-const TERMINAL_SNAP = 12;
+const SNAP_TOL = 12;
 
-// Reconcile wire endpoints with their attached components' current positions
+// Resolve the world-space point an attachment refers to
+function resolveAttach(s: CircuitState, a: WireAttachment): Point | null {
+  if (a.kind === 'component') {
+    const c = s.components.find(c => c.id === a.componentId);
+    if (!c) return null;
+    return getTerminal(c, a.terminal);
+  } else {
+    const w = s.wires.find(w => w.id === a.wireId);
+    if (!w || a.nodeIndex >= w.nodes.length) return null;
+    return w.nodes[a.nodeIndex];
+  }
+}
+
+// Reconcile wire endpoints with their attached components/wires.
+// Iterate to a fixed point so wire→wire chains propagate.
 function syncWires(s: CircuitState): CircuitState {
-  const byId = new Map(s.components.map(c => [c.id, c]));
-  let changed = false;
-  const wires = s.wires.map(w => {
-    const newNodes = [...w.nodes];
-    if (w.startAttach) {
-      const c = byId.get(w.startAttach.componentId);
-      if (c) {
-        const p = getTerminal(c, w.startAttach.terminal);
-        if (newNodes[0]?.x !== p.x || newNodes[0]?.y !== p.y) {
-          newNodes[0] = p; changed = true;
+  let cur = s;
+  for (let iter = 0; iter < 4; iter++) {
+    let changed = false;
+    const wires = cur.wires.map(w => {
+      const newNodes = [...w.nodes];
+      if (w.startAttach) {
+        const p = resolveAttach(cur, w.startAttach);
+        if (p && (newNodes[0]?.x !== p.x || newNodes[0]?.y !== p.y)) {
+          // Re-route: keep middle corner orthogonal between new start and existing end
+          const end = newNodes[newNodes.length - 1];
+          const route = orthogonalRoute(p, end);
+          newNodes.splice(0, newNodes.length, ...route);
+          changed = true;
         }
       }
-    }
-    if (w.endAttach) {
-      const c = byId.get(w.endAttach.componentId);
-      if (c) {
-        const p = getTerminal(c, w.endAttach.terminal);
+      if (w.endAttach) {
+        const p = resolveAttach(cur, w.endAttach);
         const li = newNodes.length - 1;
-        if (newNodes[li]?.x !== p.x || newNodes[li]?.y !== p.y) {
-          newNodes[li] = p; changed = true;
+        if (p && (newNodes[li]?.x !== p.x || newNodes[li]?.y !== p.y)) {
+          const start = newNodes[0];
+          const route = orthogonalRoute(start, p);
+          newNodes.splice(0, newNodes.length, ...route);
+          changed = true;
         }
       }
-    }
-    return changed ? { ...w, nodes: newNodes } : w;
-  });
-  return changed ? { ...s, wires } : s;
+      return changed ? { ...w, nodes: newNodes } : w;
+    });
+    if (!changed) break;
+    cur = { ...cur, wires };
+  }
+  return cur;
 }
 
 type Selection =
@@ -57,8 +76,10 @@ export default function CircuitEditor() {
   const [selection, setSelection] = useState<Selection>(null);
   const [dragging, setDragging] = useState(false);
   const [dragOffset, setDragOffset] = useState<Point>({ x: 0, y: 0 });
-  const [wireNodes, setWireNodes] = useState<Point[]>([]);
+  // Wire drawing: single start point, then click to finalize end point
+  const [wireStart, setWireStart] = useState<{ point: Point; attach?: WireAttachment } | null>(null);
   const [mousePos, setMousePos] = useState<Point>({ x: 0, y: 0 });
+  const [hoverSnap, setHoverSnap] = useState<Point | null>(null);
   const [editingLabel, setEditingLabel] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
   const [editPos, setEditPos] = useState<Point>({ x: 0, y: 0 });
@@ -77,6 +98,7 @@ export default function CircuitEditor() {
       setHistIdx(i => i - 1);
       setState(history[histIdx - 1]);
       setSelection(null);
+      setWireStart(null);
     }
   }, [histIdx, history]);
 
@@ -85,6 +107,7 @@ export default function CircuitEditor() {
       setHistIdx(i => i + 1);
       setState(history[histIdx + 1]);
       setSelection(null);
+      setWireStart(null);
     }
   }, [histIdx, history]);
 
@@ -92,14 +115,13 @@ export default function CircuitEditor() {
     if (window.confirm('Clear the entire canvas?')) {
       commit(EMPTY);
       setSelection(null);
-      setWireNodes([]);
+      setWireStart(null);
     }
   }, [commit]);
 
-  // Canvas coords from mouse event
-  const canvasCoords = useCallback((e: React.MouseEvent): Point => {
+  const canvasCoords = useCallback((clientX: number, clientY: number): Point => {
     const r = canvasRef.current!.getBoundingClientRect();
-    return { x: e.clientX - r.left - pan.x, y: e.clientY - r.top - pan.y };
+    return { x: clientX - r.left - pan.x, y: clientY - r.top - pan.y };
   }, [pan]);
 
   // Render
@@ -131,28 +153,29 @@ export default function CircuitEditor() {
       if (editingLabel !== label.id) drawLabel(ctx, label, sel);
     });
 
-    if (tool === 'wire' && wireNodes.length > 0) {
-      drawPreviewWire(ctx, wireNodes, snapPoint(mousePos));
+    if (tool === 'wire' && wireStart) {
+      const endPoint = hoverSnap ?? snapPoint(mousePos);
+      drawPreviewWire(ctx, wireStart.point, endPoint);
+    }
+    if (hoverSnap && (tool === 'wire' || (dragging && selection?.kind === 'wire'))) {
+      drawSnapHint(ctx, hoverSnap);
     }
 
     ctx.restore();
-  }, [state, selection, tool, wireNodes, mousePos, pan, editingLabel]);
+  }, [state, selection, tool, wireStart, mousePos, hoverSnap, pan, editingLabel, dragging]);
 
-  // Resize
   useEffect(() => {
     const handleResize = () => {
       const canvas = canvasRef.current;
       if (!canvas) return;
       canvas.style.width = '100%';
       canvas.style.height = '100%';
-      // Trigger re-render
       setMousePos(p => ({ ...p }));
     };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Keyboard
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if (editingLabel) return;
@@ -170,9 +193,8 @@ export default function CircuitEditor() {
         rotateSelection();
       }
       if (e.key === 'Escape') {
-        setWireNodes([]);
+        setWireStart(null);
         setSelection(null);
-        setTool('select');
       }
     };
     window.addEventListener('keydown', handleKey);
@@ -182,8 +204,24 @@ export default function CircuitEditor() {
   const deleteSelection = useCallback(() => {
     if (!selection) return;
     const next = { ...state };
-    if (selection.kind === 'component') next.components = state.components.filter(c => c.id !== selection.id);
-    if (selection.kind === 'wire') next.wires = state.wires.filter(w => w.id !== selection.id);
+    if (selection.kind === 'component') {
+      next.components = state.components.filter(c => c.id !== selection.id);
+      // Detach wires that pointed at this component
+      next.wires = state.wires.map(w => ({
+        ...w,
+        startAttach: w.startAttach?.kind === 'component' && w.startAttach.componentId === selection.id ? undefined : w.startAttach,
+        endAttach: w.endAttach?.kind === 'component' && w.endAttach.componentId === selection.id ? undefined : w.endAttach,
+      }));
+    }
+    if (selection.kind === 'wire') {
+      next.wires = state.wires.filter(w => w.id !== selection.id);
+      // Detach wires that pointed at this wire
+      next.wires = next.wires.map(w => ({
+        ...w,
+        startAttach: w.startAttach?.kind === 'wire' && w.startAttach.wireId === selection.id ? undefined : w.startAttach,
+        endAttach: w.endAttach?.kind === 'wire' && w.endAttach.wireId === selection.id ? undefined : w.endAttach,
+      }));
+    }
     if (selection.kind === 'label') next.labels = state.labels.filter(l => l.id !== selection.id);
     commit(next);
     setSelection(null);
@@ -202,28 +240,36 @@ export default function CircuitEditor() {
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (e.button === 1 || (e.button === 0 && e.altKey)) {
-      // Pan
       setPanning(true);
       setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
       return;
     }
     if (e.button !== 0) return;
 
-    const p = canvasCoords(e);
+    const p = canvasCoords(e.clientX, e.clientY);
     const sp = snapPoint(p);
     const ctx = canvasRef.current!.getContext('2d')!;
 
-    if (['voltage', 'voltage_var', 'resistor', 'led', 'motor', 'lamp'].includes(tool)) {
-      const comp: CircuitComponent = { id: uid(), type: tool as CircuitComponent['type'], x: sp.x, y: sp.y, rotation: 0 };
-      commit({ ...state, components: [...state.components, comp] });
-      return;
-    }
-
     if (tool === 'wire') {
-      // Snap to a component terminal if close
-      const term = findTerminalNear(state.components, p, TERMINAL_SNAP);
-      const node = term ? term.point : sp;
-      setWireNodes(prev => [...prev, node]);
+      // Snap to terminal or wire-node, otherwise free point on grid
+      const target = findSnapTarget(state.components, state.wires, p, SNAP_TOL);
+      const point = target ? target.point : sp;
+      const attach = target?.attach;
+
+      if (!wireStart) {
+        setWireStart({ point, attach });
+      } else {
+        // Second click — finalize wire as L-shape
+        const route = orthogonalRoute(wireStart.point, point);
+        const wire: Wire = {
+          id: uid(),
+          nodes: route,
+          startAttach: wireStart.attach,
+          endAttach: attach,
+        };
+        commit({ ...state, wires: [...state.wires, wire] });
+        setWireStart(null);
+      }
       return;
     }
 
@@ -238,16 +284,29 @@ export default function CircuitEditor() {
     }
 
     if (tool === 'delete') {
-      // Delete whatever we hit
       for (const c of [...state.components].reverse()) {
         if (hitTestComponent(c, p)) {
-          commit({ ...state, components: state.components.filter(x => x.id !== c.id) });
+          const next = {
+            ...state,
+            components: state.components.filter(x => x.id !== c.id),
+            wires: state.wires.map(w => ({
+              ...w,
+              startAttach: w.startAttach?.kind === 'component' && w.startAttach.componentId === c.id ? undefined : w.startAttach,
+              endAttach: w.endAttach?.kind === 'component' && w.endAttach.componentId === c.id ? undefined : w.endAttach,
+            })),
+          };
+          commit(next);
           return;
         }
       }
       for (const w of [...state.wires].reverse()) {
         if (hitTestWire(w, p)) {
-          commit({ ...state, wires: state.wires.filter(x => x.id !== w.id) });
+          const remaining = state.wires.filter(x => x.id !== w.id).map(x => ({
+            ...x,
+            startAttach: x.startAttach?.kind === 'wire' && x.startAttach.wireId === w.id ? undefined : x.startAttach,
+            endAttach: x.endAttach?.kind === 'wire' && x.endAttach.wireId === w.id ? undefined : x.endAttach,
+          }));
+          commit({ ...state, wires: remaining });
           return;
         }
       }
@@ -260,8 +319,8 @@ export default function CircuitEditor() {
       return;
     }
 
-    // Select tool
-    // Check components
+    // Select tool (default) — also handles clicks while a component-tool is active
+    // (component placement is now drag&drop only)
     for (const c of [...state.components].reverse()) {
       if (hitTestComponent(c, p)) {
         setSelection({ kind: 'component', id: c.id });
@@ -270,7 +329,6 @@ export default function CircuitEditor() {
         return;
       }
     }
-    // Check wire nodes first, then wires
     for (const w of [...state.wires].reverse()) {
       const nodeIdx = hitTestWireNode(w, p);
       if (nodeIdx !== null) {
@@ -284,7 +342,6 @@ export default function CircuitEditor() {
         return;
       }
     }
-    // Check labels
     for (const l of [...state.labels].reverse()) {
       if (hitTestLabel(ctx, l, p)) {
         setSelection({ kind: 'label', id: l.id });
@@ -294,15 +351,26 @@ export default function CircuitEditor() {
       }
     }
     setSelection(null);
-  }, [tool, state, canvasCoords, pan, commit]);
+  }, [tool, state, canvasCoords, pan, commit, wireStart]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
-    const p = canvasCoords(e);
+    const p = canvasCoords(e.clientX, e.clientY);
     setMousePos(p);
 
     if (panning) {
       setPan({ x: e.clientX - panStart.x, y: e.clientY - panStart.y });
       return;
+    }
+
+    // Snap-hint highlighting in wire mode and when dragging a wire endpoint
+    if (tool === 'wire') {
+      const t = findSnapTarget(state.components, state.wires, p, SNAP_TOL);
+      setHoverSnap(t ? t.point : null);
+    } else if (dragging && selection?.kind === 'wire' && selection.node !== null) {
+      const t = findSnapTarget(state.components, state.wires, p, SNAP_TOL, selection.id);
+      setHoverSnap(t ? t.point : null);
+    } else if (hoverSnap) {
+      setHoverSnap(null);
     }
 
     if (!dragging || !selection) return;
@@ -316,17 +384,24 @@ export default function CircuitEditor() {
         ),
       }));
     } else if (selection.kind === 'wire' && selection.node !== null) {
-      const term = findTerminalNear(state.components, p, TERMINAL_SNAP);
-      const newPos = term ? term.point : sp;
+      const target = findSnapTarget(state.components, state.wires, p, SNAP_TOL, selection.id);
+      const newPos = target ? target.point : sp;
       setState(prev => ({
         ...prev,
         wires: prev.wires.map(w => {
           if (w.id !== selection.id) return w;
           const isStart = selection.node === 0;
           const isEnd = selection.node === w.nodes.length - 1;
-          let next: Wire = { ...w, nodes: w.nodes.map((n, i) => (i === selection.node ? newPos : n)) };
-          if (isStart) next = { ...next, startAttach: term ? { componentId: term.componentId, terminal: term.terminal } : undefined };
-          if (isEnd) next = { ...next, endAttach: term ? { componentId: term.componentId, terminal: term.terminal } : undefined };
+          // For endpoints, re-route as L-shape against the opposite end
+          let nextNodes = w.nodes.map((n, i) => (i === selection.node ? newPos : n));
+          if (isStart && w.nodes.length >= 2) {
+            nextNodes = orthogonalRoute(newPos, w.nodes[w.nodes.length - 1]);
+          } else if (isEnd && w.nodes.length >= 2) {
+            nextNodes = orthogonalRoute(w.nodes[0], newPos);
+          }
+          let next: Wire = { ...w, nodes: nextNodes };
+          if (isStart) next = { ...next, startAttach: target?.attach };
+          if (isEnd) next = { ...next, endAttach: target?.attach };
           return next;
         }),
       }));
@@ -338,7 +413,7 @@ export default function CircuitEditor() {
         ),
       }));
     }
-  }, [dragging, selection, canvasCoords, dragOffset, panning, panStart]);
+  }, [dragging, selection, canvasCoords, dragOffset, panning, panStart, tool, state.components, state.wires, hoverSnap]);
 
   const handleMouseUp = useCallback(() => {
     if (panning) {
@@ -347,16 +422,14 @@ export default function CircuitEditor() {
     }
     if (dragging) {
       setDragging(false);
-      // Commit the drag
       commit(state);
     }
   }, [dragging, state, commit, panning]);
 
   const handleDoubleClick = useCallback((e: React.MouseEvent) => {
-    const p = canvasCoords(e);
+    const p = canvasCoords(e.clientX, e.clientY);
     const ctx = canvasRef.current!.getContext('2d')!;
 
-    // Double-click on label to edit
     for (const l of state.labels) {
       if (hitTestLabel(ctx, l, p)) {
         setEditingLabel(l.id);
@@ -366,12 +439,10 @@ export default function CircuitEditor() {
       }
     }
 
-    // Double-click on wire to add node (split)
     if (selection?.kind === 'wire') {
       const wire = state.wires.find(w => w.id === selection.id);
       if (!wire) return;
       const sp = snapPoint(p);
-      // Find nearest segment
       let bestDist = Infinity;
       let bestIdx = 0;
       for (let i = 0; i < wire.nodes.length - 1; i++) {
@@ -387,12 +458,7 @@ export default function CircuitEditor() {
         });
       }
     }
-
-    // Right-click to rotate
-    if (selection?.kind === 'component') {
-      rotateSelection();
-    }
-  }, [canvasCoords, state, selection, commit, rotateSelection]);
+  }, [canvasCoords, state, selection, commit]);
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -401,34 +467,25 @@ export default function CircuitEditor() {
     }
   }, [selection, rotateSelection]);
 
-  // Finalize wire on double-click when in wire mode
-  const finishWire = useCallback(() => {
-    if (wireNodes.length >= 2) {
-      const startTerm = findTerminalNear(state.components, wireNodes[0], TERMINAL_SNAP);
-      const endTerm = findTerminalNear(state.components, wireNodes[wireNodes.length - 1], TERMINAL_SNAP);
-      const nodes = [...wireNodes];
-      if (startTerm) nodes[0] = startTerm.point;
-      if (endTerm) nodes[nodes.length - 1] = endTerm.point;
-      const wire: Wire = {
-        id: uid(),
-        nodes,
-        startAttach: startTerm ? { componentId: startTerm.componentId, terminal: startTerm.terminal } : undefined,
-        endAttach: endTerm ? { componentId: endTerm.componentId, terminal: endTerm.terminal } : undefined,
-      };
-      commit({ ...state, wires: [...state.wires, wire] });
+  // ---- Drag & drop component placement ----
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    if (e.dataTransfer.types.includes('application/x-circuit-component')) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
     }
-    setWireNodes([]);
-  }, [wireNodes, state, commit]);
+  }, []);
 
-  // Handle wire finish (double-click or Escape)
-  useEffect(() => {
-    const handleDblClick = () => {
-      if (tool === 'wire' && wireNodes.length >= 2) finishWire();
-    };
-    const canvas = canvasRef.current;
-    canvas?.addEventListener('dblclick', handleDblClick);
-    return () => canvas?.removeEventListener('dblclick', handleDblClick);
-  }, [tool, wireNodes, finishWire]);
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    const type = e.dataTransfer.getData('application/x-circuit-component') as ComponentType;
+    if (!type) return;
+    e.preventDefault();
+    const p = canvasCoords(e.clientX, e.clientY);
+    const sp = snapPoint(p);
+    const comp: CircuitComponent = { id: uid(), type, x: sp.x, y: sp.y, rotation: 0 };
+    commit({ ...state, components: [...state.components, comp] });
+    setTool('select');
+    setSelection({ kind: 'component', id: comp.id });
+  }, [canvasCoords, commit, state]);
 
   const finishLabelEdit = useCallback(() => {
     if (!editingLabel) return;
@@ -439,11 +496,22 @@ export default function CircuitEditor() {
     setEditingLabel(null);
   }, [editingLabel, editText, state, commit]);
 
+  const statusText = (() => {
+    if (tool === 'wire' && wireStart) return 'Klik nogmaals om eindpunt te plaatsen · Esc om af te breken · Eindpunten zonder snap blijven los';
+    if (tool === 'wire') return 'Klik startpunt (snapt aan terminals & wire-nodes) → klik eindpunt';
+    if (tool === 'select' && selection?.kind === 'component') return 'R / rechtermuisknop = roteren · Delete = verwijderen';
+    if (tool === 'select' && selection?.kind === 'wire') return 'Sleep nodes om te verplaatsen · Dubbelklik wire om node toe te voegen';
+    if (tool === 'select') return 'Sleep componenten uit de toolbar · Klik om te selecteren · Alt+drag = pan';
+    if (tool === 'text') return 'Klik om label te plaatsen · Gebruik ₁₂₃ ₜ ᵥ Ω voor notatie';
+    if (tool === 'delete') return 'Klik op een element om het te verwijderen';
+    return '';
+  })();
+
   return (
     <div style={{ width: '100vw', height: '100vh', overflow: 'hidden', position: 'relative', background: '#fff' }}>
       <Toolbar
         tool={tool}
-        setTool={(t) => { setTool(t); setWireNodes([]); setSelection(null); }}
+        setTool={(t) => { setTool(t); setWireStart(null); setSelection(null); }}
         onUndo={undo}
         onRedo={redo}
         onReset={reset}
@@ -458,6 +526,8 @@ export default function CircuitEditor() {
         onMouseUp={handleMouseUp}
         onDoubleClick={handleDoubleClick}
         onContextMenu={handleContextMenu}
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
       />
       {editingLabel && (
         <div
@@ -513,17 +583,11 @@ export default function CircuitEditor() {
         </div>
       )}
       <div style={{
-        position: 'absolute', bottom: 8, right: 12,
-        fontSize: 11, color: '#bbb', fontFamily: 'monospace',
-        pointerEvents: 'none',
+        position: 'absolute', bottom: 8, left: 12, right: 12,
+        fontSize: 11, color: '#888', fontFamily: 'monospace',
+        pointerEvents: 'none', textAlign: 'center',
       }}>
-        {tool === 'wire' && wireNodes.length > 0 ? 'Click to add nodes · Double-click to finish' :
-         tool === 'select' && selection?.kind === 'component' ? 'R to rotate · Right-click to rotate · Delete to remove' :
-         tool === 'select' && selection?.kind === 'wire' ? 'Double-click wire to add node · Drag nodes to reshape' :
-         tool === 'select' ? 'Click to select · Alt+drag to pan' :
-         tool === 'wire' ? 'Click to start wire' :
-         tool === 'text' ? 'Click to place label · Use ₁₂₃ for subscripts' :
-         'Alt+drag or middle-click to pan'}
+        {statusText}
       </div>
     </div>
   );

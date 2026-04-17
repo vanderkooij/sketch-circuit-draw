@@ -17,10 +17,9 @@ export interface CircuitComponent {
   rotation: 0 | 90 | 180 | 270;
 }
 
-export interface WireAttachment {
-  componentId: string;
-  terminal: 0 | 1; // 0 = left/negative side, 1 = right/positive side (local coords)
-}
+export type WireAttachment =
+  | { kind: 'component'; componentId: string; terminal: 0 | 1 }
+  | { kind: 'wire'; wireId: string; nodeIndex: number };
 
 export interface Wire {
   id: string;
@@ -48,6 +47,13 @@ export function snap(v: number): number {
 
 export function snapPoint(p: Point): Point {
   return { x: snap(p.x), y: snap(p.y) };
+}
+
+// Build an orthogonal L-shape from a to b (horizontal first, then vertical).
+// Returns 2 nodes if already aligned, otherwise 3 nodes with the corner.
+export function orthogonalRoute(a: Point, b: Point): Point[] {
+  if (a.x === b.x || a.y === b.y) return [a, b];
+  return [a, { x: b.x, y: a.y }, b];
 }
 
 let _id = 0;

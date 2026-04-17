@@ -1,5 +1,5 @@
-import type { CircuitComponent, Wire, TextLabel, Point } from './types';
-import { GRID } from './types';
+import type { CircuitComponent, Wire, TextLabel, Point, WireAttachment } from './types';
+import { GRID, orthogonalRoute } from './types';
 
 export function clearCanvas(ctx: CanvasRenderingContext2D, w: number, h: number) {
   ctx.fillStyle = '#fff';
@@ -14,7 +14,6 @@ function drawVoltageSource(ctx: CanvasRenderingContext2D, c: CircuitComponent, s
   ctx.lineWidth = selected ? 2.5 : 1.5;
   ctx.lineCap = 'round';
 
-  // Connection lines
   ctx.beginPath();
   ctx.moveTo(-GRID * 2, 0);
   ctx.lineTo(-GRID * 0.5, 0);
@@ -22,42 +21,35 @@ function drawVoltageSource(ctx: CanvasRenderingContext2D, c: CircuitComponent, s
   ctx.lineTo(GRID * 2, 0);
   ctx.stroke();
 
-  // Short line (negative)
   ctx.beginPath();
   ctx.moveTo(-GRID * 0.5, -GRID * 0.4);
   ctx.lineTo(-GRID * 0.5, GRID * 0.4);
   ctx.stroke();
 
-  // Long line (positive)
   ctx.beginPath();
   ctx.moveTo(GRID * 0.5, -GRID * 0.7);
   ctx.lineTo(GRID * 0.5, GRID * 0.7);
   ctx.stroke();
 
-  // + and - labels
   ctx.fillStyle = selected ? '#555' : '#000';
   ctx.font = '10px sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'bottom';
+  // Counter-rotate so +/- stay readable
+  ctx.save();
+  ctx.rotate((-c.rotation * Math.PI) / 180);
+  // (we drew in rotated frame, but text positions need to follow rotation)
+  ctx.restore();
   ctx.fillText('+', GRID * 0.5, -GRID * 0.8);
   ctx.fillText('−', -GRID * 0.5, -GRID * 0.5);
 
-  if (selected) {
-    ctx.strokeStyle = '#999';
-    ctx.lineWidth = 0.5;
-    ctx.setLineDash([3, 3]);
-    ctx.strokeRect(-GRID * 2.2, -GRID * 1.2, GRID * 4.4, GRID * 2.4);
-    ctx.setLineDash([]);
-  }
-
+  if (selected) drawSelectionBox(ctx, GRID * 2.2, GRID * 1.2);
   ctx.restore();
 }
 
 function drawVariableVoltageSource(ctx: CanvasRenderingContext2D, c: CircuitComponent, selected: boolean) {
-  // Draw base voltage source first
   drawVoltageSource(ctx, c, selected);
 
-  // Add diagonal arrow for "variable"
   ctx.save();
   ctx.translate(c.x, c.y);
   ctx.rotate((c.rotation * Math.PI) / 180);
@@ -70,7 +62,6 @@ function drawVariableVoltageSource(ctx: CanvasRenderingContext2D, c: CircuitComp
   ctx.lineTo(GRID * 1.2, -GRID * 0.8);
   ctx.stroke();
 
-  // Arrowhead
   const ax = GRID * 1.2, ay = -GRID * 0.8;
   const angle = Math.atan2(-GRID * 0.8 - GRID * 0.8, GRID * 1.2 - (-GRID * 1.2));
   const hl = 5;
@@ -115,7 +106,6 @@ function drawLED(ctx: CanvasRenderingContext2D, c: CircuitComponent, selected: b
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
-  // Connection lines
   ctx.beginPath();
   ctx.moveTo(-GRID * 2, 0);
   ctx.lineTo(-GRID * 0.6, 0);
@@ -123,7 +113,6 @@ function drawLED(ctx: CanvasRenderingContext2D, c: CircuitComponent, selected: b
   ctx.lineTo(GRID * 2, 0);
   ctx.stroke();
 
-  // Triangle (diode)
   ctx.beginPath();
   ctx.moveTo(-GRID * 0.6, -GRID * 0.6);
   ctx.lineTo(-GRID * 0.6, GRID * 0.6);
@@ -131,13 +120,11 @@ function drawLED(ctx: CanvasRenderingContext2D, c: CircuitComponent, selected: b
   ctx.closePath();
   ctx.stroke();
 
-  // Cathode line
   ctx.beginPath();
   ctx.moveTo(GRID * 0.6, -GRID * 0.6);
   ctx.lineTo(GRID * 0.6, GRID * 0.6);
   ctx.stroke();
 
-  // Light arrows
   ctx.lineWidth = 1;
   const arrowStart = GRID * 0.3;
   for (const dy of [-GRID * 0.6, -GRID * 0.9]) {
@@ -145,7 +132,6 @@ function drawLED(ctx: CanvasRenderingContext2D, c: CircuitComponent, selected: b
     ctx.moveTo(arrowStart, dy);
     ctx.lineTo(arrowStart + GRID * 0.5, dy - GRID * 0.3);
     ctx.stroke();
-    // Small arrowhead
     ctx.beginPath();
     ctx.moveTo(arrowStart + GRID * 0.5, dy - GRID * 0.3);
     ctx.lineTo(arrowStart + GRID * 0.3, dy - GRID * 0.2);
@@ -168,7 +154,6 @@ function drawMotor(ctx: CanvasRenderingContext2D, c: CircuitComponent, selected:
 
   const r = GRID * 0.7;
 
-  // Connection lines
   ctx.beginPath();
   ctx.moveTo(-GRID * 2, 0);
   ctx.lineTo(-r, 0);
@@ -176,17 +161,14 @@ function drawMotor(ctx: CanvasRenderingContext2D, c: CircuitComponent, selected:
   ctx.lineTo(GRID * 2, 0);
   ctx.stroke();
 
-  // Circle
   ctx.beginPath();
   ctx.arc(0, 0, r, 0, Math.PI * 2);
   ctx.stroke();
 
-  // M label
   ctx.fillStyle = selected ? '#555' : '#000';
   ctx.font = 'bold 12px sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  // Counter-rotate text so it stays readable
   ctx.rotate((-c.rotation * Math.PI) / 180);
   ctx.fillText('M', 0, 0);
 
@@ -207,7 +189,6 @@ function drawLamp(ctx: CanvasRenderingContext2D, c: CircuitComponent, selected: 
 
   const r = GRID * 0.7;
 
-  // Connection lines
   ctx.beginPath();
   ctx.moveTo(-GRID * 2, 0);
   ctx.lineTo(-r, 0);
@@ -215,12 +196,10 @@ function drawLamp(ctx: CanvasRenderingContext2D, c: CircuitComponent, selected: 
   ctx.lineTo(GRID * 2, 0);
   ctx.stroke();
 
-  // Circle
   ctx.beginPath();
   ctx.arc(0, 0, r, 0, Math.PI * 2);
   ctx.stroke();
 
-  // X inside (cross)
   const d = r * 0.55;
   ctx.beginPath();
   ctx.moveTo(-d, -d);
@@ -266,6 +245,20 @@ export function drawWire(ctx: CanvasRenderingContext2D, w: Wire, selected: boole
   }
   ctx.stroke();
 
+  // Visual marker for FREE (unattached) endpoints — small open circle
+  const drawEndpointMarker = (p: Point, attached: boolean) => {
+    if (attached) return;
+    ctx.fillStyle = '#fff';
+    ctx.strokeStyle = '#888';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  };
+  drawEndpointMarker(w.nodes[0], !!w.startAttach);
+  drawEndpointMarker(w.nodes[w.nodes.length - 1], !!w.endAttach);
+
   if (selected) {
     w.nodes.forEach((n, i) => {
       ctx.fillStyle = selectedNode === i ? '#000' : '#fff';
@@ -295,30 +288,33 @@ export function drawLabel(ctx: CanvasRenderingContext2D, l: TextLabel, selected:
   }
 }
 
-export function drawPreviewWire(ctx: CanvasRenderingContext2D, nodes: Point[], cursor: Point) {
-  if (nodes.length === 0) return;
-  const last = nodes[nodes.length - 1];
-  ctx.strokeStyle = '#aaa';
-  ctx.lineWidth = 1;
-  ctx.setLineDash([4, 4]);
+// Live preview: orthogonal L-shape from start to cursor
+export function drawPreviewWire(ctx: CanvasRenderingContext2D, start: Point, cursor: Point) {
+  const route = orthogonalRoute(start, cursor);
+  ctx.strokeStyle = '#888';
+  ctx.lineWidth = 1.2;
+  ctx.setLineDash([5, 4]);
   ctx.beginPath();
-  ctx.moveTo(last.x, last.y);
-  ctx.lineTo(cursor.x, last.y);
-  ctx.lineTo(cursor.x, cursor.y);
+  ctx.moveTo(route[0].x, route[0].y);
+  for (let i = 1; i < route.length; i++) ctx.lineTo(route[i].x, route[i].y);
   ctx.stroke();
   ctx.setLineDash([]);
 
-  if (nodes.length >= 2) {
-    ctx.strokeStyle = '#000';
-    ctx.lineWidth = 1.5;
-    ctx.setLineDash([]);
-    ctx.beginPath();
-    ctx.moveTo(nodes[0].x, nodes[0].y);
-    for (let i = 1; i < nodes.length; i++) {
-      ctx.lineTo(nodes[i].x, nodes[i].y);
-    }
-    ctx.stroke();
-  }
+  // Start marker
+  ctx.fillStyle = '#000';
+  ctx.beginPath();
+  ctx.arc(start.x, start.y, 3, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+// Highlight a snap target (terminal or wire-node) under the cursor
+export function drawSnapHint(ctx: CanvasRenderingContext2D, p: Point) {
+  ctx.strokeStyle = '#000';
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, 6, 0, Math.PI * 2);
+  ctx.stroke();
 }
 
 export function hitTestComponent(c: CircuitComponent, p: Point): boolean {
@@ -331,7 +327,6 @@ export function hitTestComponent(c: CircuitComponent, p: Point): boolean {
   return Math.abs(lx) <= dx && Math.abs(ly) <= dy;
 }
 
-// Returns world-space coordinates of the two terminals (left=0, right=1) of a component
 export function getTerminal(c: CircuitComponent, terminal: 0 | 1): Point {
   const localX = terminal === 0 ? -GRID * 2 : GRID * 2;
   const cos = Math.cos((c.rotation * Math.PI) / 180);
@@ -339,7 +334,6 @@ export function getTerminal(c: CircuitComponent, terminal: 0 | 1): Point {
   return { x: c.x + localX * cos, y: c.y + localX * sin };
 }
 
-// Find the nearest component terminal within tolerance of point p
 export function findTerminalNear(
   components: CircuitComponent[],
   p: Point,
@@ -356,6 +350,46 @@ export function findTerminalNear(
     }
   }
   return best ? { componentId: best.componentId, terminal: best.terminal, point: best.point } : null;
+}
+
+// Find a wire-node (any node) near point p, excluding a specific wire id (so we don't snap to ourselves)
+export function findWireNodeNear(
+  wires: Wire[],
+  p: Point,
+  tolerance: number,
+  excludeWireId?: string,
+): { wireId: string; nodeIndex: number; point: Point } | null {
+  let best: { wireId: string; nodeIndex: number; point: Point; d: number } | null = null;
+  for (const w of wires) {
+    if (w.id === excludeWireId) continue;
+    for (let i = 0; i < w.nodes.length; i++) {
+      const n = w.nodes[i];
+      const d = Math.hypot(n.x - p.x, n.y - p.y);
+      if (d <= tolerance && (!best || d < best.d)) {
+        best = { wireId: w.id, nodeIndex: i, point: n, d };
+      }
+    }
+  }
+  return best ? { wireId: best.wireId, nodeIndex: best.nodeIndex, point: best.point } : null;
+}
+
+// Combined snap target lookup
+export function findSnapTarget(
+  components: CircuitComponent[],
+  wires: Wire[],
+  p: Point,
+  tolerance: number,
+  excludeWireId?: string,
+): { attach: WireAttachment; point: Point } | null {
+  const term = findTerminalNear(components, p, tolerance);
+  if (term) {
+    return { attach: { kind: 'component', componentId: term.componentId, terminal: term.terminal }, point: term.point };
+  }
+  const wn = findWireNodeNear(wires, p, tolerance, excludeWireId);
+  if (wn) {
+    return { attach: { kind: 'wire', wireId: wn.wireId, nodeIndex: wn.nodeIndex }, point: wn.point };
+  }
+  return null;
 }
 
 export function hitTestWire(w: Wire, p: Point): boolean {
