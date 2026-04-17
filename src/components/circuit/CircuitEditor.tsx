@@ -404,7 +404,17 @@ export default function CircuitEditor() {
   // Finalize wire on double-click when in wire mode
   const finishWire = useCallback(() => {
     if (wireNodes.length >= 2) {
-      const wire: Wire = { id: uid(), nodes: [...wireNodes] };
+      const startTerm = findTerminalNear(state.components, wireNodes[0], TERMINAL_SNAP);
+      const endTerm = findTerminalNear(state.components, wireNodes[wireNodes.length - 1], TERMINAL_SNAP);
+      const nodes = [...wireNodes];
+      if (startTerm) nodes[0] = startTerm.point;
+      if (endTerm) nodes[nodes.length - 1] = endTerm.point;
+      const wire: Wire = {
+        id: uid(),
+        nodes,
+        startAttach: startTerm ? { componentId: startTerm.componentId, terminal: startTerm.terminal } : undefined,
+        endAttach: endTerm ? { componentId: endTerm.componentId, terminal: endTerm.terminal } : undefined,
+      };
       commit({ ...state, wires: [...state.wires, wire] });
     }
     setWireNodes([]);
