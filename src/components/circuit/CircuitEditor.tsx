@@ -4,6 +4,7 @@ import { GRID, snap, snapPoint, uid } from './types';
 import {
   clearCanvas, drawComponent, drawWire, drawLabel, drawPreviewWire,
   hitTestComponent, hitTestWire, hitTestWireNode, hitTestLabel,
+  getTerminal, findTerminalNear,
 } from './renderer';
 import { Toolbar } from './Toolbar';
 
