@@ -17,9 +17,16 @@ export interface CircuitComponent {
   rotation: 0 | 90 | 180 | 270;
 }
 
+export interface WireAttachment {
+  componentId: string;
+  terminal: 0 | 1; // 0 = left/negative side, 1 = right/positive side (local coords)
+}
+
 export interface Wire {
   id: string;
   nodes: Point[];
+  startAttach?: WireAttachment;
+  endAttach?: WireAttachment;
 }
 
 export interface TextLabel {
