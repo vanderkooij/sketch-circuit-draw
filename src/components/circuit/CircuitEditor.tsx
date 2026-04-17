@@ -309,20 +309,26 @@ export default function CircuitEditor() {
     const sp = snapPoint(p);
 
     if (selection.kind === 'component') {
-      setState(prev => ({
+      setState(prev => syncWires({
         ...prev,
         components: prev.components.map(c =>
           c.id === selection.id ? { ...c, x: snap(p.x - dragOffset.x), y: snap(p.y - dragOffset.y) } : c
         ),
       }));
     } else if (selection.kind === 'wire' && selection.node !== null) {
+      const term = findTerminalNear(state.components, p, TERMINAL_SNAP);
+      const newPos = term ? term.point : sp;
       setState(prev => ({
         ...prev,
-        wires: prev.wires.map(w =>
-          w.id === selection.id
-            ? { ...w, nodes: w.nodes.map((n, i) => (i === selection.node ? sp : n)) }
-            : w
-        ),
+        wires: prev.wires.map(w => {
+          if (w.id !== selection.id) return w;
+          const isStart = selection.node === 0;
+          const isEnd = selection.node === w.nodes.length - 1;
+          let next: Wire = { ...w, nodes: w.nodes.map((n, i) => (i === selection.node ? newPos : n)) };
+          if (isStart) next = { ...next, startAttach: term ? { componentId: term.componentId, terminal: term.terminal } : undefined };
+          if (isEnd) next = { ...next, endAttach: term ? { componentId: term.componentId, terminal: term.terminal } : undefined };
+          return next;
+        }),
       }));
     } else if (selection.kind === 'label') {
       setState(prev => ({
