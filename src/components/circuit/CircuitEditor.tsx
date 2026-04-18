@@ -480,6 +480,7 @@ export default function CircuitEditor() {
     }
     if (dragging) {
       setDragging(false);
+      setAlignGuides([]);
       commit(state);
     }
   }, [dragging, state, commit, panning]);
