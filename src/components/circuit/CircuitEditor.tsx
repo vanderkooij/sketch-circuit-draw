@@ -1,6 +1,6 @@
 import { useRef, useState, useCallback, useEffect } from 'react';
-import type { CircuitState, Tool, Point, CircuitComponent, Wire, TextLabel, WireAttachment, ComponentType } from './types';
-import { GRID, snap, snapPoint, uid, orthogonalRoute } from './types';
+import type { CircuitState, Tool, Point, CircuitComponent, Wire, TextLabel, WireAttachment, ComponentType, LRouteOrientation } from './types';
+import { GRID, snap, snapPoint, uid, orthogonalRoute, inferOrientation } from './types';
 import {
   clearCanvas, drawComponent, drawWire, drawLabel, drawPreviewWire, drawSnapHint,
   hitTestComponent, hitTestWire, hitTestWireNode, hitTestLabel,
@@ -36,9 +36,9 @@ function syncWires(s: CircuitState): CircuitState {
       if (w.startAttach) {
         const p = resolveAttach(cur, w.startAttach);
         if (p && (newNodes[0]?.x !== p.x || newNodes[0]?.y !== p.y)) {
-          // Re-route: keep middle corner orthogonal between new start and existing end
           const end = newNodes[newNodes.length - 1];
-          const route = orthogonalRoute(p, end);
+          const orient = inferOrientation(newNodes);
+          const route = orthogonalRoute(p, end, orient);
           newNodes.splice(0, newNodes.length, ...route);
           changed = true;
         }
@@ -48,7 +48,8 @@ function syncWires(s: CircuitState): CircuitState {
         const li = newNodes.length - 1;
         if (p && (newNodes[li]?.x !== p.x || newNodes[li]?.y !== p.y)) {
           const start = newNodes[0];
-          const route = orthogonalRoute(start, p);
+          const orient = inferOrientation(newNodes);
+          const route = orthogonalRoute(start, p, orient);
           newNodes.splice(0, newNodes.length, ...route);
           changed = true;
         }
@@ -78,6 +79,10 @@ export default function CircuitEditor() {
   const [dragOffset, setDragOffset] = useState<Point>({ x: 0, y: 0 });
   // Wire drawing: single start point, then click to finalize end point
   const [wireStart, setWireStart] = useState<{ point: Point; attach?: WireAttachment } | null>(null);
+  // L-shape orientation while previewing. Auto-detected from first mouse move,
+  // user can flip with spacebar.
+  const [wireOrient, setWireOrient] = useState<LRouteOrientation>('HV');
+  const [wireOrientLocked, setWireOrientLocked] = useState(false);
   const [mousePos, setMousePos] = useState<Point>({ x: 0, y: 0 });
   const [hoverSnap, setHoverSnap] = useState<Point | null>(null);
   const [editingLabel, setEditingLabel] = useState<string | null>(null);
@@ -155,14 +160,14 @@ export default function CircuitEditor() {
 
     if (tool === 'wire' && wireStart) {
       const endPoint = hoverSnap ?? snapPoint(mousePos);
-      drawPreviewWire(ctx, wireStart.point, endPoint);
+      drawPreviewWire(ctx, wireStart.point, endPoint, wireOrient);
     }
     if (hoverSnap && (tool === 'wire' || (dragging && selection?.kind === 'wire'))) {
       drawSnapHint(ctx, hoverSnap);
     }
 
     ctx.restore();
-  }, [state, selection, tool, wireStart, mousePos, hoverSnap, pan, editingLabel, dragging]);
+  }, [state, selection, tool, wireStart, mousePos, hoverSnap, pan, editingLabel, dragging, wireOrient]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -194,12 +199,18 @@ export default function CircuitEditor() {
       }
       if (e.key === 'Escape') {
         setWireStart(null);
+        setWireOrientLocked(false);
         setSelection(null);
+      }
+      if (e.key === ' ' && tool === 'wire' && wireStart) {
+        e.preventDefault();
+        setWireOrient(o => (o === 'HV' ? 'VH' : 'HV'));
+        setWireOrientLocked(true);
       }
     };
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [selection, editingLabel, undo, redo]);
+  }, [selection, editingLabel, undo, redo, tool, wireStart]);
 
   const deleteSelection = useCallback(() => {
     if (!selection) return;
@@ -258,9 +269,11 @@ export default function CircuitEditor() {
 
       if (!wireStart) {
         setWireStart({ point, attach });
+        setWireOrient('HV');
+        setWireOrientLocked(false);
       } else {
-        // Second click — finalize wire as L-shape
-        const route = orthogonalRoute(wireStart.point, point);
+        // Second click — finalize wire as L-shape using current orientation
+        const route = orthogonalRoute(wireStart.point, point, wireOrient);
         const wire: Wire = {
           id: uid(),
           nodes: route,
@@ -269,6 +282,7 @@ export default function CircuitEditor() {
         };
         commit({ ...state, wires: [...state.wires, wire] });
         setWireStart(null);
+        setWireOrientLocked(false);
       }
       return;
     }
@@ -351,7 +365,7 @@ export default function CircuitEditor() {
       }
     }
     setSelection(null);
-  }, [tool, state, canvasCoords, pan, commit, wireStart]);
+  }, [tool, state, canvasCoords, pan, commit, wireStart, wireOrient]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     const p = canvasCoords(e.clientX, e.clientY);
@@ -366,6 +380,15 @@ export default function CircuitEditor() {
     if (tool === 'wire') {
       const t = findSnapTarget(state.components, state.wires, p, SNAP_TOL);
       setHoverSnap(t ? t.point : null);
+      // Auto-detect L orientation from cursor direction (until user locks via spacebar)
+      if (wireStart && !wireOrientLocked) {
+        const dx = Math.abs(p.x - wireStart.point.x);
+        const dy = Math.abs(p.y - wireStart.point.y);
+        if (dx > 4 || dy > 4) {
+          // If cursor moves more horizontally first, do H then V; otherwise V then H
+          setWireOrient(dx >= dy ? 'HV' : 'VH');
+        }
+      }
     } else if (dragging && selection?.kind === 'wire' && selection.node !== null) {
       const t = findSnapTarget(state.components, state.wires, p, SNAP_TOL, selection.id);
       setHoverSnap(t ? t.point : null);
@@ -392,12 +415,13 @@ export default function CircuitEditor() {
           if (w.id !== selection.id) return w;
           const isStart = selection.node === 0;
           const isEnd = selection.node === w.nodes.length - 1;
-          // For endpoints, re-route as L-shape against the opposite end
+          // For endpoints, re-route as L-shape against the opposite end, preserving orientation
           let nextNodes = w.nodes.map((n, i) => (i === selection.node ? newPos : n));
+          const orient = inferOrientation(w.nodes);
           if (isStart && w.nodes.length >= 2) {
-            nextNodes = orthogonalRoute(newPos, w.nodes[w.nodes.length - 1]);
+            nextNodes = orthogonalRoute(newPos, w.nodes[w.nodes.length - 1], orient);
           } else if (isEnd && w.nodes.length >= 2) {
-            nextNodes = orthogonalRoute(w.nodes[0], newPos);
+            nextNodes = orthogonalRoute(w.nodes[0], newPos, orient);
           }
           let next: Wire = { ...w, nodes: nextNodes };
           if (isStart) next = { ...next, startAttach: target?.attach };
@@ -413,7 +437,7 @@ export default function CircuitEditor() {
         ),
       }));
     }
-  }, [dragging, selection, canvasCoords, dragOffset, panning, panStart, tool, state.components, state.wires, hoverSnap]);
+  }, [dragging, selection, canvasCoords, dragOffset, panning, panStart, tool, state.components, state.wires, hoverSnap, wireStart, wireOrientLocked]);
 
   const handleMouseUp = useCallback(() => {
     if (panning) {
@@ -497,8 +521,8 @@ export default function CircuitEditor() {
   }, [editingLabel, editText, state, commit]);
 
   const statusText = (() => {
-    if (tool === 'wire' && wireStart) return 'Klik nogmaals om eindpunt te plaatsen · Esc om af te breken · Eindpunten zonder snap blijven los';
-    if (tool === 'wire') return 'Klik startpunt (snapt aan terminals & wire-nodes) → klik eindpunt';
+    if (tool === 'wire' && wireStart) return `Klik eindpunt · Spatie = wissel L-richting (${wireOrient}) · Esc om af te breken`;
+    if (tool === 'wire') return 'Klik startpunt → beweeg in gewenste richting → klik eindpunt (spatie wisselt L-vorm)';
     if (tool === 'select' && selection?.kind === 'component') return 'R / rechtermuisknop = roteren · Delete = verwijderen';
     if (tool === 'select' && selection?.kind === 'wire') return 'Sleep nodes om te verplaatsen · Dubbelklik wire om node toe te voegen';
     if (tool === 'select') return 'Sleep componenten uit de toolbar · Klik om te selecteren · Alt+drag = pan';

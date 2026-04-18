@@ -15,37 +15,34 @@ function VoltageIcon({ size = 18 }: { size?: number }) {
   const w = size, h = size;
   return (
     <svg width={w} height={h} viewBox="0 0 20 20" fill="none" stroke="#000" strokeWidth="1.3" strokeLinecap="round">
-      <line x1="1" y1="10" x2="7" y2="10" />
-      <line x1="13" y1="10" x2="19" y2="10" />
-      <line x1="7" y1="6.5" x2="7" y2="13.5" />
-      <line x1="13" y1="4" x2="13" y2="16" />
-      <text x="13" y="3" textAnchor="middle" fontSize="5" fill="#000" stroke="none" fontFamily="sans-serif">+</text>
-      <text x="7" y="3" textAnchor="middle" fontSize="5.5" fill="#000" stroke="none" fontFamily="sans-serif">−</text>
+      <line x1="1" y1="10" x2="9" y2="10" />
+      <line x1="11" y1="10" x2="19" y2="10" />
+      <line x1="9" y1="7" x2="9" y2="13" />
+      <line x1="11" y1="4.5" x2="11" y2="15.5" />
+      <text x="12.5" y="4" textAnchor="middle" fontSize="5" fill="#000" stroke="none" fontFamily="sans-serif">+</text>
+      <text x="7.5" y="4" textAnchor="middle" fontSize="5.5" fill="#000" stroke="none" fontFamily="sans-serif">−</text>
     </svg>
   );
 }
 
-function VoltageVarIcon({ size = 18 }: { size?: number }) {
+function VoltageACIcon({ size = 18 }: { size?: number }) {
   const w = size, h = size;
   return (
     <svg width={w} height={h} viewBox="0 0 20 20" fill="none" stroke="#000" strokeWidth="1.3" strokeLinecap="round">
-      <line x1="1" y1="10" x2="7" y2="10" />
-      <line x1="13" y1="10" x2="19" y2="10" />
-      <line x1="7" y1="6.5" x2="7" y2="13.5" />
-      <line x1="13" y1="4" x2="13" y2="16" />
-      <line x1="5" y1="16" x2="16" y2="3" strokeWidth="1" />
-      <line x1="14.5" y1="3.5" x2="16" y2="3" strokeWidth="1" />
-      <line x1="15.5" y1="4.8" x2="16" y2="3" strokeWidth="1" />
+      <line x1="1" y1="10" x2="4" y2="10" />
+      <line x1="16" y1="10" x2="19" y2="10" />
+      <circle cx="10" cy="10" r="6" />
+      <path d="M 6.5 10 Q 8.25 6.5 10 10 T 13.5 10" strokeWidth="1.2" fill="none" />
     </svg>
   );
 }
 
-const componentTypes: ComponentType[] = ['voltage', 'voltage_var', 'resistor', 'led', 'motor', 'lamp'];
+const componentTypes: ComponentType[] = ['voltage', 'voltage_ac', 'resistor', 'led', 'motor', 'lamp'];
 
 const tools: { id: Tool; label: string; icon: string | React.ReactNode }[] = [
   { id: 'select', label: 'Select', icon: '⇱' },
-  { id: 'voltage', label: 'Voltage Source (drag to canvas)', icon: <VoltageIcon /> },
-  { id: 'voltage_var', label: 'Variable Source (drag to canvas)', icon: <VoltageVarIcon /> },
+  { id: 'voltage', label: 'DC Voltage Source (drag to canvas)', icon: <VoltageIcon /> },
+  { id: 'voltage_ac', label: 'AC Voltage Source (drag to canvas)', icon: <VoltageACIcon /> },
   { id: 'resistor', label: 'Resistor (drag to canvas)', icon: '▭' },
   { id: 'led', label: 'LED (drag to canvas)', icon: '▷' },
   { id: 'motor', label: 'Motor (drag to canvas)', icon: 'M' },

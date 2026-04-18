@@ -1,4 +1,4 @@
-import type { CircuitComponent, Wire, TextLabel, Point, WireAttachment } from './types';
+import type { CircuitComponent, Wire, TextLabel, Point, WireAttachment, LRouteOrientation } from './types';
 import { GRID, orthogonalRoute } from './types';
 
 export function clearCanvas(ctx: CanvasRenderingContext2D, w: number, h: number) {
@@ -14,64 +14,76 @@ function drawVoltageSource(ctx: CanvasRenderingContext2D, c: CircuitComponent, s
   ctx.lineWidth = selected ? 2.5 : 1.5;
   ctx.lineCap = 'round';
 
+  // Plates closer together
+  const gap = GRID * 0.18;
   ctx.beginPath();
   ctx.moveTo(-GRID * 2, 0);
-  ctx.lineTo(-GRID * 0.5, 0);
-  ctx.moveTo(GRID * 0.5, 0);
+  ctx.lineTo(-gap, 0);
+  ctx.moveTo(gap, 0);
   ctx.lineTo(GRID * 2, 0);
   ctx.stroke();
 
+  // Short plate (negative)
   ctx.beginPath();
-  ctx.moveTo(-GRID * 0.5, -GRID * 0.4);
-  ctx.lineTo(-GRID * 0.5, GRID * 0.4);
+  ctx.moveTo(-gap, -GRID * 0.4);
+  ctx.lineTo(-gap, GRID * 0.4);
   ctx.stroke();
 
+  // Long plate (positive)
   ctx.beginPath();
-  ctx.moveTo(GRID * 0.5, -GRID * 0.7);
-  ctx.lineTo(GRID * 0.5, GRID * 0.7);
+  ctx.moveTo(gap, -GRID * 0.7);
+  ctx.lineTo(gap, GRID * 0.7);
   ctx.stroke();
 
   ctx.fillStyle = selected ? '#555' : '#000';
   ctx.font = '10px sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'bottom';
-  // Counter-rotate so +/- stay readable
-  ctx.save();
-  ctx.rotate((-c.rotation * Math.PI) / 180);
-  // (we drew in rotated frame, but text positions need to follow rotation)
-  ctx.restore();
-  ctx.fillText('+', GRID * 0.5, -GRID * 0.8);
-  ctx.fillText('−', -GRID * 0.5, -GRID * 0.5);
+  ctx.fillText('+', gap + GRID * 0.3, -GRID * 0.85);
+  ctx.fillText('−', -gap - GRID * 0.3, -GRID * 0.55);
 
   if (selected) drawSelectionBox(ctx, GRID * 2.2, GRID * 1.2);
   ctx.restore();
 }
 
-function drawVariableVoltageSource(ctx: CanvasRenderingContext2D, c: CircuitComponent, selected: boolean) {
-  drawVoltageSource(ctx, c, selected);
-
+function drawACVoltageSource(ctx: CanvasRenderingContext2D, c: CircuitComponent, selected: boolean) {
   ctx.save();
   ctx.translate(c.x, c.y);
   ctx.rotate((c.rotation * Math.PI) / 180);
   ctx.strokeStyle = selected ? '#555' : '#000';
-  ctx.lineWidth = 1.2;
+  ctx.lineWidth = selected ? 2.5 : 1.5;
   ctx.lineCap = 'round';
 
+  const r = GRID * 0.7;
+
+  // Leads
   ctx.beginPath();
-  ctx.moveTo(-GRID * 1.2, GRID * 0.8);
-  ctx.lineTo(GRID * 1.2, -GRID * 0.8);
+  ctx.moveTo(-GRID * 2, 0);
+  ctx.lineTo(-r, 0);
+  ctx.moveTo(r, 0);
+  ctx.lineTo(GRID * 2, 0);
   ctx.stroke();
 
-  const ax = GRID * 1.2, ay = -GRID * 0.8;
-  const angle = Math.atan2(-GRID * 0.8 - GRID * 0.8, GRID * 1.2 - (-GRID * 1.2));
-  const hl = 5;
+  // Circle
   ctx.beginPath();
-  ctx.moveTo(ax, ay);
-  ctx.lineTo(ax - hl * Math.cos(angle - 0.4), ay - hl * Math.sin(angle - 0.4));
-  ctx.moveTo(ax, ay);
-  ctx.lineTo(ax - hl * Math.cos(angle + 0.4), ay - hl * Math.sin(angle + 0.4));
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
   ctx.stroke();
 
+  // Sine wave inside
+  ctx.lineWidth = selected ? 2 : 1.3;
+  ctx.beginPath();
+  const w = r * 0.75;
+  const amp = r * 0.4;
+  const steps = 24;
+  for (let i = 0; i <= steps; i++) {
+    const x = -w + (2 * w * i) / steps;
+    const y = -Math.sin((i / steps) * Math.PI * 2) * amp;
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  if (selected) drawSelectionBox(ctx, GRID * 2.2, GRID);
   ctx.restore();
 }
 
@@ -223,7 +235,7 @@ function drawSelectionBox(ctx: CanvasRenderingContext2D, hw: number, hh: number)
 export function drawComponent(ctx: CanvasRenderingContext2D, c: CircuitComponent, selected: boolean) {
   switch (c.type) {
     case 'voltage': return drawVoltageSource(ctx, c, selected);
-    case 'voltage_var': return drawVariableVoltageSource(ctx, c, selected);
+    case 'voltage_ac': return drawACVoltageSource(ctx, c, selected);
     case 'resistor': return drawResistor(ctx, c, selected);
     case 'led': return drawLED(ctx, c, selected);
     case 'motor': return drawMotor(ctx, c, selected);
@@ -289,8 +301,8 @@ export function drawLabel(ctx: CanvasRenderingContext2D, l: TextLabel, selected:
 }
 
 // Live preview: orthogonal L-shape from start to cursor
-export function drawPreviewWire(ctx: CanvasRenderingContext2D, start: Point, cursor: Point) {
-  const route = orthogonalRoute(start, cursor);
+export function drawPreviewWire(ctx: CanvasRenderingContext2D, start: Point, cursor: Point, orientation: LRouteOrientation = 'HV') {
+  const route = orthogonalRoute(start, cursor, orientation);
   ctx.strokeStyle = '#888';
   ctx.lineWidth = 1.2;
   ctx.setLineDash([5, 4]);
