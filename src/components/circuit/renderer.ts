@@ -306,6 +306,35 @@ export function drawPreviewWire(ctx: CanvasRenderingContext2D, start: Point, cur
   ctx.fill();
 }
 
+// Draw alignment guide lines (dashed) across the visible canvas
+export function drawAlignmentGuides(
+  ctx: CanvasRenderingContext2D,
+  guides: { x?: number; y?: number }[],
+  viewW: number,
+  viewH: number,
+  panX: number,
+  panY: number,
+) {
+  ctx.save();
+  ctx.strokeStyle = '#ff3b30';
+  ctx.lineWidth = 0.8;
+  ctx.setLineDash([4, 4]);
+  for (const g of guides) {
+    ctx.beginPath();
+    if (g.x !== undefined) {
+      ctx.moveTo(g.x, -panY);
+      ctx.lineTo(g.x, viewH - panY);
+    }
+    if (g.y !== undefined) {
+      ctx.moveTo(-panX, g.y);
+      ctx.lineTo(viewW - panX, g.y);
+    }
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  ctx.restore();
+}
+
 // Highlight a snap target (terminal or wire-node) under the cursor
 export function drawSnapHint(ctx: CanvasRenderingContext2D, p: Point) {
   ctx.strokeStyle = '#000';

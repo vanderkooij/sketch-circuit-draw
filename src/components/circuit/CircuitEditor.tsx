@@ -3,6 +3,7 @@ import type { CircuitState, Tool, Point, CircuitComponent, Wire, TextLabel, Wire
 import { GRID, snap, snapPoint, uid, orthogonalRoute, inferOrientation } from './types';
 import {
   clearCanvas, drawComponent, drawWire, drawLabel, drawPreviewWire, drawSnapHint,
+  drawAlignmentGuides,
   hitTestComponent, hitTestWire, hitTestWireNode, hitTestLabel,
   getTerminal, findSnapTarget,
 } from './renderer';
@@ -11,6 +12,28 @@ import { Toolbar } from './Toolbar';
 const EMPTY: CircuitState = { components: [], wires: [], labels: [] };
 
 const SNAP_TOL = 12;
+const ALIGN_TOL = 6;
+
+// Snap a dragged position to align with other components' x/y axes.
+// Returns adjusted position plus the guide lines that should be displayed.
+function alignToOthers(
+  pos: Point,
+  others: CircuitComponent[],
+): { pos: Point; guides: { x?: number; y?: number }[] } {
+  let bestDx: { d: number; x: number } | null = null;
+  let bestDy: { d: number; y: number } | null = null;
+  for (const c of others) {
+    const dx = Math.abs(c.x - pos.x);
+    if (dx <= ALIGN_TOL && (!bestDx || dx < bestDx.d)) bestDx = { d: dx, x: c.x };
+    const dy = Math.abs(c.y - pos.y);
+    if (dy <= ALIGN_TOL && (!bestDy || dy < bestDy.d)) bestDy = { d: dy, y: c.y };
+  }
+  const guides: { x?: number; y?: number }[] = [];
+  const out = { ...pos };
+  if (bestDx) { out.x = bestDx.x; guides.push({ x: bestDx.x }); }
+  if (bestDy) { out.y = bestDy.y; guides.push({ y: bestDy.y }); }
+  return { pos: out, guides };
+}
 
 // Resolve the world-space point an attachment refers to
 function resolveAttach(s: CircuitState, a: WireAttachment): Point | null {
@@ -91,6 +114,7 @@ export default function CircuitEditor() {
   const [pan, setPan] = useState<Point>({ x: 0, y: 0 });
   const [panning, setPanning] = useState(false);
   const [panStart, setPanStart] = useState<Point>({ x: 0, y: 0 });
+  const [alignGuides, setAlignGuides] = useState<{ x?: number; y?: number }[]>([]);
 
   const commit = useCallback((next: CircuitState) => {
     setState(next);
@@ -165,9 +189,14 @@ export default function CircuitEditor() {
     if (hoverSnap && (tool === 'wire' || (dragging && selection?.kind === 'wire'))) {
       drawSnapHint(ctx, hoverSnap);
     }
+    if (alignGuides.length > 0) {
+      const cw = canvasRef.current!.clientWidth;
+      const ch = canvasRef.current!.clientHeight;
+      drawAlignmentGuides(ctx, alignGuides, cw, ch, pan.x, pan.y);
+    }
 
     ctx.restore();
-  }, [state, selection, tool, wireStart, mousePos, hoverSnap, pan, editingLabel, dragging, wireOrient]);
+  }, [state, selection, tool, wireStart, mousePos, hoverSnap, pan, editingLabel, dragging, wireOrient, alignGuides]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -400,10 +429,15 @@ export default function CircuitEditor() {
     const sp = snapPoint(p);
 
     if (selection.kind === 'component') {
+      const rawX = snap(p.x - dragOffset.x);
+      const rawY = snap(p.y - dragOffset.y);
+      const others = state.components.filter(c => c.id !== selection.id);
+      const aligned = alignToOthers({ x: rawX, y: rawY }, others);
+      setAlignGuides(aligned.guides);
       setState(prev => syncWires({
         ...prev,
         components: prev.components.map(c =>
-          c.id === selection.id ? { ...c, x: snap(p.x - dragOffset.x), y: snap(p.y - dragOffset.y) } : c
+          c.id === selection.id ? { ...c, x: aligned.pos.x, y: aligned.pos.y } : c
         ),
       }));
     } else if (selection.kind === 'wire' && selection.node !== null) {
@@ -446,6 +480,7 @@ export default function CircuitEditor() {
     }
     if (dragging) {
       setDragging(false);
+      setAlignGuides([]);
       commit(state);
     }
   }, [dragging, state, commit, panning]);
@@ -505,7 +540,8 @@ export default function CircuitEditor() {
     e.preventDefault();
     const p = canvasCoords(e.clientX, e.clientY);
     const sp = snapPoint(p);
-    const comp: CircuitComponent = { id: uid(), type, x: sp.x, y: sp.y, rotation: 0 };
+    const aligned = alignToOthers(sp, state.components);
+    const comp: CircuitComponent = { id: uid(), type, x: aligned.pos.x, y: aligned.pos.y, rotation: 0 };
     commit({ ...state, components: [...state.components, comp] });
     setTool('select');
     setSelection({ kind: 'component', id: comp.id });
