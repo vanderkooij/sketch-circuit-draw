@@ -160,14 +160,14 @@ export default function CircuitEditor() {
 
     if (tool === 'wire' && wireStart) {
       const endPoint = hoverSnap ?? snapPoint(mousePos);
-      drawPreviewWire(ctx, wireStart.point, endPoint);
+      drawPreviewWire(ctx, wireStart.point, endPoint, wireOrient);
     }
     if (hoverSnap && (tool === 'wire' || (dragging && selection?.kind === 'wire'))) {
       drawSnapHint(ctx, hoverSnap);
     }
 
     ctx.restore();
-  }, [state, selection, tool, wireStart, mousePos, hoverSnap, pan, editingLabel, dragging]);
+  }, [state, selection, tool, wireStart, mousePos, hoverSnap, pan, editingLabel, dragging, wireOrient]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -199,12 +199,18 @@ export default function CircuitEditor() {
       }
       if (e.key === 'Escape') {
         setWireStart(null);
+        setWireOrientLocked(false);
         setSelection(null);
+      }
+      if (e.key === ' ' && tool === 'wire' && wireStart) {
+        e.preventDefault();
+        setWireOrient(o => (o === 'HV' ? 'VH' : 'HV'));
+        setWireOrientLocked(true);
       }
     };
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [selection, editingLabel, undo, redo]);
+  }, [selection, editingLabel, undo, redo, tool, wireStart]);
 
   const deleteSelection = useCallback(() => {
     if (!selection) return;
