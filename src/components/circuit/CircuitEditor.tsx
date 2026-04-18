@@ -1,6 +1,6 @@
 import { useRef, useState, useCallback, useEffect } from 'react';
-import type { CircuitState, Tool, Point, CircuitComponent, Wire, TextLabel, WireAttachment, ComponentType } from './types';
-import { GRID, snap, snapPoint, uid, orthogonalRoute } from './types';
+import type { CircuitState, Tool, Point, CircuitComponent, Wire, TextLabel, WireAttachment, ComponentType, LRouteOrientation } from './types';
+import { GRID, snap, snapPoint, uid, orthogonalRoute, inferOrientation } from './types';
 import {
   clearCanvas, drawComponent, drawWire, drawLabel, drawPreviewWire, drawSnapHint,
   hitTestComponent, hitTestWire, hitTestWireNode, hitTestLabel,
@@ -36,9 +36,9 @@ function syncWires(s: CircuitState): CircuitState {
       if (w.startAttach) {
         const p = resolveAttach(cur, w.startAttach);
         if (p && (newNodes[0]?.x !== p.x || newNodes[0]?.y !== p.y)) {
-          // Re-route: keep middle corner orthogonal between new start and existing end
           const end = newNodes[newNodes.length - 1];
-          const route = orthogonalRoute(p, end);
+          const orient = inferOrientation(newNodes);
+          const route = orthogonalRoute(p, end, orient);
           newNodes.splice(0, newNodes.length, ...route);
           changed = true;
         }
@@ -48,7 +48,8 @@ function syncWires(s: CircuitState): CircuitState {
         const li = newNodes.length - 1;
         if (p && (newNodes[li]?.x !== p.x || newNodes[li]?.y !== p.y)) {
           const start = newNodes[0];
-          const route = orthogonalRoute(start, p);
+          const orient = inferOrientation(newNodes);
+          const route = orthogonalRoute(start, p, orient);
           newNodes.splice(0, newNodes.length, ...route);
           changed = true;
         }
@@ -78,6 +79,10 @@ export default function CircuitEditor() {
   const [dragOffset, setDragOffset] = useState<Point>({ x: 0, y: 0 });
   // Wire drawing: single start point, then click to finalize end point
   const [wireStart, setWireStart] = useState<{ point: Point; attach?: WireAttachment } | null>(null);
+  // L-shape orientation while previewing. Auto-detected from first mouse move,
+  // user can flip with spacebar.
+  const [wireOrient, setWireOrient] = useState<LRouteOrientation>('HV');
+  const [wireOrientLocked, setWireOrientLocked] = useState(false);
   const [mousePos, setMousePos] = useState<Point>({ x: 0, y: 0 });
   const [hoverSnap, setHoverSnap] = useState<Point | null>(null);
   const [editingLabel, setEditingLabel] = useState<string | null>(null);
