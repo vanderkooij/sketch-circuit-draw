@@ -365,7 +365,7 @@ export default function CircuitEditor() {
       }
     }
     setSelection(null);
-  }, [tool, state, canvasCoords, pan, commit, wireStart]);
+  }, [tool, state, canvasCoords, pan, commit, wireStart, wireOrient]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     const p = canvasCoords(e.clientX, e.clientY);
@@ -380,6 +380,15 @@ export default function CircuitEditor() {
     if (tool === 'wire') {
       const t = findSnapTarget(state.components, state.wires, p, SNAP_TOL);
       setHoverSnap(t ? t.point : null);
+      // Auto-detect L orientation from cursor direction (until user locks via spacebar)
+      if (wireStart && !wireOrientLocked) {
+        const dx = Math.abs(p.x - wireStart.point.x);
+        const dy = Math.abs(p.y - wireStart.point.y);
+        if (dx > 4 || dy > 4) {
+          // If cursor moves more horizontally first, do H then V; otherwise V then H
+          setWireOrient(dx >= dy ? 'HV' : 'VH');
+        }
+      }
     } else if (dragging && selection?.kind === 'wire' && selection.node !== null) {
       const t = findSnapTarget(state.components, state.wires, p, SNAP_TOL, selection.id);
       setHoverSnap(t ? t.point : null);
@@ -406,12 +415,13 @@ export default function CircuitEditor() {
           if (w.id !== selection.id) return w;
           const isStart = selection.node === 0;
           const isEnd = selection.node === w.nodes.length - 1;
-          // For endpoints, re-route as L-shape against the opposite end
+          // For endpoints, re-route as L-shape against the opposite end, preserving orientation
           let nextNodes = w.nodes.map((n, i) => (i === selection.node ? newPos : n));
+          const orient = inferOrientation(w.nodes);
           if (isStart && w.nodes.length >= 2) {
-            nextNodes = orthogonalRoute(newPos, w.nodes[w.nodes.length - 1]);
+            nextNodes = orthogonalRoute(newPos, w.nodes[w.nodes.length - 1], orient);
           } else if (isEnd && w.nodes.length >= 2) {
-            nextNodes = orthogonalRoute(w.nodes[0], newPos);
+            nextNodes = orthogonalRoute(w.nodes[0], newPos, orient);
           }
           let next: Wire = { ...w, nodes: nextNodes };
           if (isStart) next = { ...next, startAttach: target?.attach };
@@ -427,7 +437,7 @@ export default function CircuitEditor() {
         ),
       }));
     }
-  }, [dragging, selection, canvasCoords, dragOffset, panning, panStart, tool, state.components, state.wires, hoverSnap]);
+  }, [dragging, selection, canvasCoords, dragOffset, panning, panStart, tool, state.components, state.wires, hoverSnap, wireStart, wireOrientLocked]);
 
   const handleMouseUp = useCallback(() => {
     if (panning) {
@@ -511,8 +521,8 @@ export default function CircuitEditor() {
   }, [editingLabel, editText, state, commit]);
 
   const statusText = (() => {
-    if (tool === 'wire' && wireStart) return 'Klik nogmaals om eindpunt te plaatsen · Esc om af te breken · Eindpunten zonder snap blijven los';
-    if (tool === 'wire') return 'Klik startpunt (snapt aan terminals & wire-nodes) → klik eindpunt';
+    if (tool === 'wire' && wireStart) return `Klik eindpunt · Spatie = wissel L-richting (${wireOrient}) · Esc om af te breken`;
+    if (tool === 'wire') return 'Klik startpunt → beweeg in gewenste richting → klik eindpunt (spatie wisselt L-vorm)';
     if (tool === 'select' && selection?.kind === 'component') return 'R / rechtermuisknop = roteren · Delete = verwijderen';
     if (tool === 'select' && selection?.kind === 'wire') return 'Sleep nodes om te verplaatsen · Dubbelklik wire om node toe te voegen';
     if (tool === 'select') return 'Sleep componenten uit de toolbar · Klik om te selecteren · Alt+drag = pan';
