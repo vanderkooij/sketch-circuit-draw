@@ -12,6 +12,28 @@ import { Toolbar } from './Toolbar';
 const EMPTY: CircuitState = { components: [], wires: [], labels: [] };
 
 const SNAP_TOL = 12;
+const ALIGN_TOL = 6;
+
+// Snap a dragged position to align with other components' x/y axes.
+// Returns adjusted position plus the guide lines that should be displayed.
+function alignToOthers(
+  pos: Point,
+  others: CircuitComponent[],
+): { pos: Point; guides: { x?: number; y?: number }[] } {
+  let bestDx: { d: number; x: number } | null = null;
+  let bestDy: { d: number; y: number } | null = null;
+  for (const c of others) {
+    const dx = Math.abs(c.x - pos.x);
+    if (dx <= ALIGN_TOL && (!bestDx || dx < bestDx.d)) bestDx = { d: dx, x: c.x };
+    const dy = Math.abs(c.y - pos.y);
+    if (dy <= ALIGN_TOL && (!bestDy || dy < bestDy.d)) bestDy = { d: dy, y: c.y };
+  }
+  const guides: { x?: number; y?: number }[] = [];
+  const out = { ...pos };
+  if (bestDx) { out.x = bestDx.x; guides.push({ x: bestDx.x }); }
+  if (bestDy) { out.y = bestDy.y; guides.push({ y: bestDy.y }); }
+  return { pos: out, guides };
+}
 
 // Resolve the world-space point an attachment refers to
 function resolveAttach(s: CircuitState, a: WireAttachment): Point | null {
