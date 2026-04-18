@@ -223,7 +223,7 @@ function drawSelectionBox(ctx: CanvasRenderingContext2D, hw: number, hh: number)
 export function drawComponent(ctx: CanvasRenderingContext2D, c: CircuitComponent, selected: boolean) {
   switch (c.type) {
     case 'voltage': return drawVoltageSource(ctx, c, selected);
-    case 'voltage_var': return drawVariableVoltageSource(ctx, c, selected);
+    case 'voltage_ac': return drawACVoltageSource(ctx, c, selected);
     case 'resistor': return drawResistor(ctx, c, selected);
     case 'led': return drawLED(ctx, c, selected);
     case 'motor': return drawMotor(ctx, c, selected);
@@ -289,8 +289,8 @@ export function drawLabel(ctx: CanvasRenderingContext2D, l: TextLabel, selected:
 }
 
 // Live preview: orthogonal L-shape from start to cursor
-export function drawPreviewWire(ctx: CanvasRenderingContext2D, start: Point, cursor: Point) {
-  const route = orthogonalRoute(start, cursor);
+export function drawPreviewWire(ctx: CanvasRenderingContext2D, start: Point, cursor: Point, orientation: LRouteOrientation = 'HV') {
+  const route = orthogonalRoute(start, cursor, orientation);
   ctx.strokeStyle = '#888';
   ctx.lineWidth = 1.2;
   ctx.setLineDash([5, 4]);
