@@ -269,9 +269,11 @@ export default function CircuitEditor() {
 
       if (!wireStart) {
         setWireStart({ point, attach });
+        setWireOrient('HV');
+        setWireOrientLocked(false);
       } else {
-        // Second click — finalize wire as L-shape
-        const route = orthogonalRoute(wireStart.point, point);
+        // Second click — finalize wire as L-shape using current orientation
+        const route = orthogonalRoute(wireStart.point, point, wireOrient);
         const wire: Wire = {
           id: uid(),
           nodes: route,
@@ -280,6 +282,7 @@ export default function CircuitEditor() {
         };
         commit({ ...state, wires: [...state.wires, wire] });
         setWireStart(null);
+        setWireOrientLocked(false);
       }
       return;
     }
