@@ -257,19 +257,6 @@ export function drawWire(ctx: CanvasRenderingContext2D, w: Wire, selected: boole
   }
   ctx.stroke();
 
-  // Visual marker for FREE (unattached) endpoints — small open circle
-  const drawEndpointMarker = (p: Point, attached: boolean) => {
-    if (attached) return;
-    ctx.fillStyle = '#fff';
-    ctx.strokeStyle = '#888';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-  };
-  drawEndpointMarker(w.nodes[0], !!w.startAttach);
-  drawEndpointMarker(w.nodes[w.nodes.length - 1], !!w.endAttach);
 
   if (selected) {
     w.nodes.forEach((n, i) => {
