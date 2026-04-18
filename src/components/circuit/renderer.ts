@@ -1,4 +1,4 @@
-import type { CircuitComponent, Wire, TextLabel, Point, WireAttachment } from './types';
+import type { CircuitComponent, Wire, TextLabel, Point, WireAttachment, LRouteOrientation } from './types';
 import { GRID, orthogonalRoute } from './types';
 
 export function clearCanvas(ctx: CanvasRenderingContext2D, w: number, h: number) {
