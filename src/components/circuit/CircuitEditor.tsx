@@ -540,7 +540,8 @@ export default function CircuitEditor() {
     e.preventDefault();
     const p = canvasCoords(e.clientX, e.clientY);
     const sp = snapPoint(p);
-    const comp: CircuitComponent = { id: uid(), type, x: sp.x, y: sp.y, rotation: 0 };
+    const aligned = alignToOthers(sp, state.components);
+    const comp: CircuitComponent = { id: uid(), type, x: aligned.pos.x, y: aligned.pos.y, rotation: 0 };
     commit({ ...state, components: [...state.components, comp] });
     setTool('select');
     setSelection({ kind: 'component', id: comp.id });
