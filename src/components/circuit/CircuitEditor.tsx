@@ -189,9 +189,14 @@ export default function CircuitEditor() {
     if (hoverSnap && (tool === 'wire' || (dragging && selection?.kind === 'wire'))) {
       drawSnapHint(ctx, hoverSnap);
     }
+    if (alignGuides.length > 0) {
+      const cw = canvasRef.current!.clientWidth;
+      const ch = canvasRef.current!.clientHeight;
+      drawAlignmentGuides(ctx, alignGuides, cw, ch, pan.x, pan.y);
+    }
 
     ctx.restore();
-  }, [state, selection, tool, wireStart, mousePos, hoverSnap, pan, editingLabel, dragging, wireOrient]);
+  }, [state, selection, tool, wireStart, mousePos, hoverSnap, pan, editingLabel, dragging, wireOrient, alignGuides]);
 
   useEffect(() => {
     const handleResize = () => {
