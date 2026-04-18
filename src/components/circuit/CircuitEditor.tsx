@@ -429,10 +429,15 @@ export default function CircuitEditor() {
     const sp = snapPoint(p);
 
     if (selection.kind === 'component') {
+      const rawX = snap(p.x - dragOffset.x);
+      const rawY = snap(p.y - dragOffset.y);
+      const others = state.components.filter(c => c.id !== selection.id);
+      const aligned = alignToOthers({ x: rawX, y: rawY }, others);
+      setAlignGuides(aligned.guides);
       setState(prev => syncWires({
         ...prev,
         components: prev.components.map(c =>
-          c.id === selection.id ? { ...c, x: snap(p.x - dragOffset.x), y: snap(p.y - dragOffset.y) } : c
+          c.id === selection.id ? { ...c, x: aligned.pos.x, y: aligned.pos.y } : c
         ),
       }));
     } else if (selection.kind === 'wire' && selection.node !== null) {
