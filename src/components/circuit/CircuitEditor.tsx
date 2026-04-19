@@ -87,9 +87,24 @@ function syncWires(s: CircuitState): CircuitState {
 
 type Selection =
   | { kind: 'component'; id: string }
-  | { kind: 'wire'; id: string; node: number | null }
+  | { kind: 'wire'; id: string; node: number | null; segment?: number | null }
   | { kind: 'label'; id: string }
   | null;
+
+// Hit-test which segment of a wire is under p (returns segment index = index of starting node)
+function hitTestWireSegment(w: Wire, p: Point): number | null {
+  for (let i = 0; i < w.nodes.length - 1; i++) {
+    const a = w.nodes[i], b = w.nodes[i + 1];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const lenSq = dx * dx + dy * dy;
+    if (lenSq === 0) continue;
+    let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq;
+    t = Math.max(0, Math.min(1, t));
+    const px = a.x + t * dx, py = a.y + t * dy;
+    if (Math.hypot(p.x - px, p.y - py) < 8) return i;
+  }
+  return null;
+}
 
 export default function CircuitEditor() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -230,6 +245,7 @@ export default function CircuitEditor() {
         setWireStart(null);
         setWireOrientLocked(false);
         setSelection(null);
+        setTool('select');
       }
       if (e.key === ' ' && tool === 'wire' && wireStart) {
         e.preventDefault();
@@ -375,13 +391,16 @@ export default function CircuitEditor() {
     for (const w of [...state.wires].reverse()) {
       const nodeIdx = hitTestWireNode(w, p);
       if (nodeIdx !== null) {
-        setSelection({ kind: 'wire', id: w.id, node: nodeIdx });
+        setSelection({ kind: 'wire', id: w.id, node: nodeIdx, segment: null });
         setDragging(true);
         setDragOffset({ x: 0, y: 0 });
         return;
       }
-      if (hitTestWire(w, p)) {
-        setSelection({ kind: 'wire', id: w.id, node: null });
+      const segIdx = hitTestWireSegment(w, p);
+      if (segIdx !== null) {
+        setSelection({ kind: 'wire', id: w.id, node: null, segment: segIdx });
+        setDragging(true);
+        setDragOffset({ x: p.x, y: p.y });
         return;
       }
     }
@@ -463,6 +482,63 @@ export default function CircuitEditor() {
           return next;
         }),
       }));
+    } else if (selection.kind === 'wire' && selection.segment !== null && selection.segment !== undefined) {
+      // Drag a segment perpendicular to its orientation. Endpoint nodes that are
+      // attached (start/end with an attach) stay anchored — we insert helper nodes
+      // so only the interior bend moves. Free endpoints move with the segment.
+      setState(prev => ({
+        ...prev,
+        wires: prev.wires.map(w => {
+          if (w.id !== selection.id) return w;
+          const segIdx = selection.segment!;
+          const a = w.nodes[segIdx], b = w.nodes[segIdx + 1];
+          if (!a || !b) return w;
+          const horizontal = a.y === b.y;
+          const vertical = a.x === b.x;
+          if (!horizontal && !vertical) return w; // diagonal segments not draggable
+          const nodes = w.nodes.map(n => ({ ...n }));
+          const isStartSeg = segIdx === 0;
+          const isEndSeg = segIdx === w.nodes.length - 2;
+          const startLocked = isStartSeg && !!w.startAttach;
+          const endLocked = isEndSeg && !!w.endAttach;
+          if (horizontal) {
+            const newY = snap(p.y);
+            // Move both endpoints of segment in Y
+            // For locked endpoints, insert a helper node so the lock point stays
+            let leftIdx = segIdx;
+            let rightIdx = segIdx + 1;
+            if (startLocked && isStartSeg) {
+              nodes.splice(1, 0, { x: a.x, y: newY });
+              leftIdx = 1; rightIdx = 2;
+            } else {
+              nodes[leftIdx] = { x: a.x, y: newY };
+              if (startLocked && isStartSeg) {/* unreachable */}
+            }
+            if (endLocked && isEndSeg) {
+              nodes.splice(rightIdx, 0, { x: b.x, y: newY });
+              // right point stays at b
+            } else {
+              nodes[rightIdx] = { x: b.x, y: newY };
+            }
+          } else {
+            const newX = snap(p.x);
+            let leftIdx = segIdx;
+            let rightIdx = segIdx + 1;
+            if (startLocked && isStartSeg) {
+              nodes.splice(1, 0, { x: newX, y: a.y });
+              leftIdx = 1; rightIdx = 2;
+            } else {
+              nodes[leftIdx] = { x: newX, y: a.y };
+            }
+            if (endLocked && isEndSeg) {
+              nodes.splice(rightIdx, 0, { x: newX, y: b.y });
+            } else {
+              nodes[rightIdx] = { x: newX, y: b.y };
+            }
+          }
+          return { ...w, nodes };
+        }),
+      }));
     } else if (selection.kind === 'label') {
       setState(prev => ({
         ...prev,
@@ -516,8 +592,22 @@ export default function CircuitEditor() {
           wires: state.wires.map(w => w.id === wire.id ? { ...w, nodes: newNodes } : w),
         });
       }
+      return;
     }
-  }, [canvasCoords, state, selection, commit]);
+
+    // In select mode, double-clicking empty space creates a new text label
+    if (tool === 'select') {
+      // Make sure we didn't double-click an existing element
+      for (const c of state.components) if (hitTestComponent(c, p)) return;
+      for (const w of state.wires) if (hitTestWire(w, p)) return;
+      const sp = snapPoint(p);
+      const label: TextLabel = { id: uid(), x: sp.x, y: sp.y, text: '' };
+      commit({ ...state, labels: [...state.labels, label] });
+      setEditingLabel(label.id);
+      setEditText('');
+      setEditPos(sp);
+    }
+  }, [canvasCoords, state, selection, commit, tool]);
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -560,9 +650,9 @@ export default function CircuitEditor() {
     if (tool === 'wire' && wireStart) return `Klik eindpunt · Spatie = wissel L-richting (${wireOrient}) · Esc om af te breken`;
     if (tool === 'wire') return 'Klik startpunt → beweeg in gewenste richting → klik eindpunt (spatie wisselt L-vorm)';
     if (tool === 'select' && selection?.kind === 'component') return 'R / rechtermuisknop = roteren · Delete = verwijderen';
-    if (tool === 'select' && selection?.kind === 'wire') return 'Sleep nodes om te verplaatsen · Dubbelklik wire om node toe te voegen';
-    if (tool === 'select') return 'Sleep componenten uit de toolbar · Klik om te selecteren · Alt+drag = pan';
-    if (tool === 'text') return 'Klik om label te plaatsen · Gebruik ₁₂₃ ₜ ᵥ Ω voor notatie';
+    if (tool === 'select' && selection?.kind === 'wire') return 'Sleep nodes of segmenten · Dubbelklik wire om node toe te voegen';
+    if (tool === 'select') return 'Sleep componenten uit de toolbar · Dubbelklik = nieuw tekstvak · Esc = select tool · Alt+drag = pan';
+    if (tool === 'text') return 'Klik om label te plaatsen · Gebruik ₁₂₃ ₜₒₜ ᵥ Ω voor notatie';
     if (tool === 'delete') return 'Klik op een element om het te verwijderen';
     return '';
   })();
@@ -622,7 +712,7 @@ export default function CircuitEditor() {
           }}>
             <div style={{ marginBottom: 4, color: '#555', fontWeight: 600 }}>Quick insert:</div>
             <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-              {['₀','₁','₂','₃','₄','₅','₆','₇','₈','₉','ₜ','ᵥ'].map(s => (
+              {['₀','₁','₂','₃','₄','₅','₆','₇','₈','₉','ₜₒₜ','ᵥ'].map(s => (
                 <button key={s} onMouseDown={e => { e.preventDefault(); setEditText(t => t + s); }}
                   style={{ width: 24, height: 24, border: '1px solid #ddd', borderRadius: 3,
                     background: '#fafafa', cursor: 'pointer', fontSize: 13, fontFamily: 'monospace' }}>
