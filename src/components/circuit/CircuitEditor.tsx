@@ -140,7 +140,7 @@ function syncWires(s: CircuitState): CircuitState {
 
 type Selection =
   | { kind: 'component'; id: string }
-  | { kind: 'wire'; id: string; node: number | null; segment?: number | null }
+  | { kind: 'wire'; id: string; node: number | null; segment?: number | null; segLeft?: number; segRight?: number }
   | { kind: 'label'; id: string }
   | null;
 
