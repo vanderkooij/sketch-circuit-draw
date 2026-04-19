@@ -245,6 +245,7 @@ export default function CircuitEditor() {
         setWireStart(null);
         setWireOrientLocked(false);
         setSelection(null);
+        setTool('select');
       }
       if (e.key === ' ' && tool === 'wire' && wireStart) {
         e.preventDefault();
