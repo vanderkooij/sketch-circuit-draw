@@ -615,6 +615,7 @@ export default function CircuitEditor() {
     if (dragging) {
       setDragging(false);
       setAlignGuides([]);
+      setDistLabels([]);
       commit(state);
     }
   }, [dragging, state, commit, panning]);
