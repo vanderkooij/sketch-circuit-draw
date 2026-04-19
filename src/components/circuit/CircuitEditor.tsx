@@ -650,9 +650,9 @@ export default function CircuitEditor() {
     if (tool === 'wire' && wireStart) return `Klik eindpunt · Spatie = wissel L-richting (${wireOrient}) · Esc om af te breken`;
     if (tool === 'wire') return 'Klik startpunt → beweeg in gewenste richting → klik eindpunt (spatie wisselt L-vorm)';
     if (tool === 'select' && selection?.kind === 'component') return 'R / rechtermuisknop = roteren · Delete = verwijderen';
-    if (tool === 'select' && selection?.kind === 'wire') return 'Sleep nodes om te verplaatsen · Dubbelklik wire om node toe te voegen';
-    if (tool === 'select') return 'Sleep componenten uit de toolbar · Klik om te selecteren · Alt+drag = pan';
-    if (tool === 'text') return 'Klik om label te plaatsen · Gebruik ₁₂₃ ₜ ᵥ Ω voor notatie';
+    if (tool === 'select' && selection?.kind === 'wire') return 'Sleep nodes of segmenten · Dubbelklik wire om node toe te voegen';
+    if (tool === 'select') return 'Sleep componenten uit de toolbar · Dubbelklik = nieuw tekstvak · Esc = select tool · Alt+drag = pan';
+    if (tool === 'text') return 'Klik om label te plaatsen · Gebruik ₁₂₃ ₜₒₜ ᵥ Ω voor notatie';
     if (tool === 'delete') return 'Klik op een element om het te verwijderen';
     return '';
   })();
