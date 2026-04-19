@@ -390,13 +390,16 @@ export default function CircuitEditor() {
     for (const w of [...state.wires].reverse()) {
       const nodeIdx = hitTestWireNode(w, p);
       if (nodeIdx !== null) {
-        setSelection({ kind: 'wire', id: w.id, node: nodeIdx });
+        setSelection({ kind: 'wire', id: w.id, node: nodeIdx, segment: null });
         setDragging(true);
         setDragOffset({ x: 0, y: 0 });
         return;
       }
-      if (hitTestWire(w, p)) {
-        setSelection({ kind: 'wire', id: w.id, node: null });
+      const segIdx = hitTestWireSegment(w, p);
+      if (segIdx !== null) {
+        setSelection({ kind: 'wire', id: w.id, node: null, segment: segIdx });
+        setDragging(true);
+        setDragOffset({ x: p.x, y: p.y });
         return;
       }
     }
