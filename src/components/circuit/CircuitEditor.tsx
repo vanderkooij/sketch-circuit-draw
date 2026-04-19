@@ -3,7 +3,7 @@ import type { CircuitState, Tool, Point, CircuitComponent, Wire, TextLabel, Wire
 import { GRID, snap, snapPoint, uid, orthogonalRoute, inferOrientation } from './types';
 import {
   clearCanvas, drawComponent, drawWire, drawLabel, drawPreviewWire, drawSnapHint,
-  drawAlignmentGuides,
+  drawAlignmentGuides, drawDistanceLabels,
   hitTestComponent, hitTestWire, hitTestWireNode, hitTestLabel,
   getTerminal, findSnapTarget,
 } from './renderer';
@@ -13,13 +13,23 @@ const EMPTY: CircuitState = { components: [], wires: [], labels: [] };
 
 const SNAP_TOL = 12;
 const ALIGN_TOL = 6;
+const DISTRIBUTE_TOL = 8;
 
-// Snap a dragged position to align with other components' x/y axes.
-// Returns adjusted position plus the guide lines that should be displayed.
+export interface AlignGuide { x?: number; y?: number }
+
+export interface DistanceLabel {
+  a: Point;
+  b: Point;
+  axis: 'x' | 'y';
+  px: number;
+}
+
+// Snap a dragged position to align with other components' x/y axes,
+// AND to equal-spacing positions when 2+ others share an axis.
 function alignToOthers(
   pos: Point,
   others: CircuitComponent[],
-): { pos: Point; guides: { x?: number; y?: number }[] } {
+): { pos: Point; guides: AlignGuide[]; distances: DistanceLabel[] } {
   let bestDx: { d: number; x: number } | null = null;
   let bestDy: { d: number; y: number } | null = null;
   for (const c of others) {
@@ -28,11 +38,74 @@ function alignToOthers(
     const dy = Math.abs(c.y - pos.y);
     if (dy <= ALIGN_TOL && (!bestDy || dy < bestDy.d)) bestDy = { d: dy, y: c.y };
   }
-  const guides: { x?: number; y?: number }[] = [];
   const out = { ...pos };
+  const guides: AlignGuide[] = [];
   if (bestDx) { out.x = bestDx.x; guides.push({ x: bestDx.x }); }
   if (bestDy) { out.y = bestDy.y; guides.push({ y: bestDy.y }); }
-  return { pos: out, guides };
+
+  // Equal-spacing snap on Y when ≥2 others share X (vertical column)
+  const sharedX = others.filter(c => c.x === out.x);
+  if (sharedX.length >= 2) {
+    const sorted = [...sharedX].sort((a, b) => a.y - b.y);
+    for (let i = 0; i < sorted.length - 1; i++) {
+      const gap = sorted[i + 1].y - sorted[i].y;
+      for (const cy of [sorted[i].y - gap, (sorted[i].y + sorted[i + 1].y) / 2, sorted[i + 1].y + gap]) {
+        if (Math.abs(out.y - cy) <= DISTRIBUTE_TOL) { out.y = cy; break; }
+      }
+    }
+  }
+  const sharedY = others.filter(c => c.y === out.y);
+  if (sharedY.length >= 2) {
+    const sorted = [...sharedY].sort((a, b) => a.x - b.x);
+    for (let i = 0; i < sorted.length - 1; i++) {
+      const gap = sorted[i + 1].x - sorted[i].x;
+      for (const cx of [sorted[i].x - gap, (sorted[i].x + sorted[i + 1].x) / 2, sorted[i + 1].x + gap]) {
+        if (Math.abs(out.x - cx) <= DISTRIBUTE_TOL) { out.x = cx; break; }
+      }
+    }
+  }
+
+  // Distance labels for live preview when ≥1 other shares an axis with the
+  // (snapped) position. Show all consecutive gaps in the column / row.
+  const distances: DistanceLabel[] = [];
+  const colX = others.filter(c => c.x === out.x);
+  if (colX.length >= 1) {
+    const all = [...colX.map(c => ({ x: c.x, y: c.y })), { x: out.x, y: out.y }]
+      .sort((a, b) => a.y - b.y);
+    for (let i = 0; i < all.length - 1; i++) {
+      distances.push({ a: all[i], b: all[i + 1], axis: 'y', px: all[i + 1].y - all[i].y });
+    }
+  }
+  const rowY = others.filter(c => c.y === out.y);
+  if (rowY.length >= 1) {
+    const all = [...rowY.map(c => ({ x: c.x, y: c.y })), { x: out.x, y: out.y }]
+      .sort((a, b) => a.x - b.x);
+    for (let i = 0; i < all.length - 1; i++) {
+      distances.push({ a: all[i], b: all[i + 1], axis: 'x', px: all[i + 1].x - all[i].x });
+    }
+  }
+
+  return { pos: out, guides, distances };
+}
+
+// Remove redundant nodes from a wire: collapse consecutive collinear nodes
+// and drop exact duplicates. Endpoints are preserved.
+function cleanupWireNodes(nodes: Point[]): Point[] {
+  if (nodes.length <= 2) return nodes;
+  const out: Point[] = [nodes[0]];
+  for (let i = 1; i < nodes.length - 1; i++) {
+    const prev = out[out.length - 1];
+    const cur = nodes[i];
+    const next = nodes[i + 1];
+    if (cur.x === prev.x && cur.y === prev.y) continue;
+    if (prev.x === cur.x && cur.x === next.x) continue;
+    if (prev.y === cur.y && cur.y === next.y) continue;
+    out.push(cur);
+  }
+  const last = nodes[nodes.length - 1];
+  const tail = out[out.length - 1];
+  if (last.x !== tail.x || last.y !== tail.y) out.push(last);
+  return out;
 }
 
 // Resolve the world-space point an attachment refers to
@@ -87,7 +160,7 @@ function syncWires(s: CircuitState): CircuitState {
 
 type Selection =
   | { kind: 'component'; id: string }
-  | { kind: 'wire'; id: string; node: number | null; segment?: number | null }
+  | { kind: 'wire'; id: string; node: number | null; segment?: number | null; segLeft?: number; segRight?: number }
   | { kind: 'label'; id: string }
   | null;
 
@@ -129,7 +202,8 @@ export default function CircuitEditor() {
   const [pan, setPan] = useState<Point>({ x: 0, y: 0 });
   const [panning, setPanning] = useState(false);
   const [panStart, setPanStart] = useState<Point>({ x: 0, y: 0 });
-  const [alignGuides, setAlignGuides] = useState<{ x?: number; y?: number }[]>([]);
+  const [alignGuides, setAlignGuides] = useState<AlignGuide[]>([]);
+  const [distLabels, setDistLabels] = useState<DistanceLabel[]>([]);
 
   const commit = useCallback((next: CircuitState) => {
     setState(next);
@@ -209,9 +283,12 @@ export default function CircuitEditor() {
       const ch = canvasRef.current!.clientHeight;
       drawAlignmentGuides(ctx, alignGuides, cw, ch, pan.x, pan.y);
     }
+    if (distLabels.length > 0) {
+      drawDistanceLabels(ctx, distLabels);
+    }
 
     ctx.restore();
-  }, [state, selection, tool, wireStart, mousePos, hoverSnap, pan, editingLabel, dragging, wireOrient, alignGuides]);
+  }, [state, selection, tool, wireStart, mousePos, hoverSnap, pan, editingLabel, dragging, wireOrient, alignGuides, distLabels]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -398,9 +475,33 @@ export default function CircuitEditor() {
       }
       const segIdx = hitTestWireSegment(w, p);
       if (segIdx !== null) {
-        setSelection({ kind: 'wire', id: w.id, node: null, segment: segIdx });
+        // Restructure the wire so the segment has 2 interior nodes that we can
+        // freely move. Insert helper nodes at the start/end if they're attached
+        // (those endpoints must stay anchored). After this, simply moving the
+        // two segment nodes perpendicular grows/shrinks the neighbour segments.
+        const isStartSeg = segIdx === 0;
+        const isEndSeg = segIdx === w.nodes.length - 2;
+        const a = w.nodes[segIdx], b = w.nodes[segIdx + 1];
+        const newNodes = w.nodes.map(n => ({ ...n }));
+        let leftIdx = segIdx;
+        let rightIdx = segIdx + 1;
+        if (isStartSeg && w.startAttach) {
+          // Duplicate the anchor so leftIdx becomes a free copy at the same spot
+          newNodes.splice(1, 0, { ...a });
+          leftIdx = 1;
+          rightIdx = 2;
+        }
+        if (isEndSeg && w.endAttach) {
+          newNodes.splice(rightIdx, 0, { ...b });
+          // right anchor stays at the (new) last position; leftIdx unchanged
+        }
+        commit({
+          ...state,
+          wires: state.wires.map(x => x.id === w.id ? { ...x, nodes: newNodes } : x),
+        });
+        setSelection({ kind: 'wire', id: w.id, node: null, segment: segIdx, segLeft: leftIdx, segRight: rightIdx } as Selection);
         setDragging(true);
-        setDragOffset({ x: p.x, y: p.y });
+        setDragOffset({ x: 0, y: 0 });
         return;
       }
     }
@@ -453,6 +554,7 @@ export default function CircuitEditor() {
       const others = state.components.filter(c => c.id !== selection.id);
       const aligned = alignToOthers({ x: rawX, y: rawY }, others);
       setAlignGuides(aligned.guides);
+      setDistLabels(aligned.distances);
       setState(prev => syncWires({
         ...prev,
         components: prev.components.map(c =>
@@ -482,59 +584,30 @@ export default function CircuitEditor() {
           return next;
         }),
       }));
-    } else if (selection.kind === 'wire' && selection.segment !== null && selection.segment !== undefined) {
-      // Drag a segment perpendicular to its orientation. Endpoint nodes that are
-      // attached (start/end with an attach) stay anchored — we insert helper nodes
-      // so only the interior bend moves. Free endpoints move with the segment.
+    } else if (selection.kind === 'wire' && selection.segLeft !== undefined && selection.segRight !== undefined) {
+      // Move the two segment endpoints perpendicular to the segment.
+      // Helper nodes were already inserted at mousedown if start/end were attached,
+      // so segLeft / segRight always point to free, movable nodes.
+      const li = selection.segLeft;
+      const ri = selection.segRight;
       setState(prev => ({
         ...prev,
         wires: prev.wires.map(w => {
           if (w.id !== selection.id) return w;
-          const segIdx = selection.segment!;
-          const a = w.nodes[segIdx], b = w.nodes[segIdx + 1];
+          const a = w.nodes[li], b = w.nodes[ri];
           if (!a || !b) return w;
           const horizontal = a.y === b.y;
           const vertical = a.x === b.x;
-          if (!horizontal && !vertical) return w; // diagonal segments not draggable
+          if (!horizontal && !vertical) return w;
           const nodes = w.nodes.map(n => ({ ...n }));
-          const isStartSeg = segIdx === 0;
-          const isEndSeg = segIdx === w.nodes.length - 2;
-          const startLocked = isStartSeg && !!w.startAttach;
-          const endLocked = isEndSeg && !!w.endAttach;
           if (horizontal) {
             const newY = snap(p.y);
-            // Move both endpoints of segment in Y
-            // For locked endpoints, insert a helper node so the lock point stays
-            let leftIdx = segIdx;
-            let rightIdx = segIdx + 1;
-            if (startLocked && isStartSeg) {
-              nodes.splice(1, 0, { x: a.x, y: newY });
-              leftIdx = 1; rightIdx = 2;
-            } else {
-              nodes[leftIdx] = { x: a.x, y: newY };
-              if (startLocked && isStartSeg) {/* unreachable */}
-            }
-            if (endLocked && isEndSeg) {
-              nodes.splice(rightIdx, 0, { x: b.x, y: newY });
-              // right point stays at b
-            } else {
-              nodes[rightIdx] = { x: b.x, y: newY };
-            }
+            nodes[li] = { x: a.x, y: newY };
+            nodes[ri] = { x: b.x, y: newY };
           } else {
             const newX = snap(p.x);
-            let leftIdx = segIdx;
-            let rightIdx = segIdx + 1;
-            if (startLocked && isStartSeg) {
-              nodes.splice(1, 0, { x: newX, y: a.y });
-              leftIdx = 1; rightIdx = 2;
-            } else {
-              nodes[leftIdx] = { x: newX, y: a.y };
-            }
-            if (endLocked && isEndSeg) {
-              nodes.splice(rightIdx, 0, { x: newX, y: b.y });
-            } else {
-              nodes[rightIdx] = { x: newX, y: b.y };
-            }
+            nodes[li] = { x: newX, y: a.y };
+            nodes[ri] = { x: newX, y: b.y };
           }
           return { ...w, nodes };
         }),
@@ -557,9 +630,19 @@ export default function CircuitEditor() {
     if (dragging) {
       setDragging(false);
       setAlignGuides([]);
-      commit(state);
+      setDistLabels([]);
+      // After a wire-segment drag, simplify wires by removing collinear/duplicate nodes
+      const cleaned: CircuitState = {
+        ...state,
+        wires: state.wires.map(w => ({ ...w, nodes: cleanupWireNodes(w.nodes) })),
+      };
+      commit(cleaned);
+      // Clear segment indices on selection so the next click recomputes them
+      if (selection?.kind === 'wire' && selection.segment !== undefined) {
+        setSelection({ kind: 'wire', id: selection.id, node: null, segment: null });
+      }
     }
-  }, [dragging, state, commit, panning]);
+  }, [dragging, state, commit, panning, selection]);
 
   const handleDoubleClick = useCallback((e: React.MouseEvent) => {
     const p = canvasCoords(e.clientX, e.clientY);
