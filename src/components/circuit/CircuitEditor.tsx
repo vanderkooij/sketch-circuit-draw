@@ -13,13 +13,23 @@ const EMPTY: CircuitState = { components: [], wires: [], labels: [] };
 
 const SNAP_TOL = 12;
 const ALIGN_TOL = 6;
+const DISTRIBUTE_TOL = 8;
 
-// Snap a dragged position to align with other components' x/y axes.
-// Returns adjusted position plus the guide lines that should be displayed.
+export interface AlignGuide { x?: number; y?: number }
+
+export interface DistanceLabel {
+  a: Point;
+  b: Point;
+  axis: 'x' | 'y';
+  px: number;
+}
+
+// Snap a dragged position to align with other components' x/y axes,
+// AND to equal-spacing positions when 2+ others share an axis.
 function alignToOthers(
   pos: Point,
   others: CircuitComponent[],
-): { pos: Point; guides: { x?: number; y?: number }[] } {
+): { pos: Point; guides: AlignGuide[]; distances: DistanceLabel[] } {
   let bestDx: { d: number; x: number } | null = null;
   let bestDy: { d: number; y: number } | null = null;
   for (const c of others) {
@@ -28,11 +38,54 @@ function alignToOthers(
     const dy = Math.abs(c.y - pos.y);
     if (dy <= ALIGN_TOL && (!bestDy || dy < bestDy.d)) bestDy = { d: dy, y: c.y };
   }
-  const guides: { x?: number; y?: number }[] = [];
   const out = { ...pos };
+  const guides: AlignGuide[] = [];
   if (bestDx) { out.x = bestDx.x; guides.push({ x: bestDx.x }); }
   if (bestDy) { out.y = bestDy.y; guides.push({ y: bestDy.y }); }
-  return { pos: out, guides };
+
+  // Equal-spacing snap on Y when ≥2 others share X (vertical column)
+  const sharedX = others.filter(c => c.x === out.x);
+  if (sharedX.length >= 2) {
+    const sorted = [...sharedX].sort((a, b) => a.y - b.y);
+    for (let i = 0; i < sorted.length - 1; i++) {
+      const gap = sorted[i + 1].y - sorted[i].y;
+      for (const cy of [sorted[i].y - gap, (sorted[i].y + sorted[i + 1].y) / 2, sorted[i + 1].y + gap]) {
+        if (Math.abs(out.y - cy) <= DISTRIBUTE_TOL) { out.y = cy; break; }
+      }
+    }
+  }
+  const sharedY = others.filter(c => c.y === out.y);
+  if (sharedY.length >= 2) {
+    const sorted = [...sharedY].sort((a, b) => a.x - b.x);
+    for (let i = 0; i < sorted.length - 1; i++) {
+      const gap = sorted[i + 1].x - sorted[i].x;
+      for (const cx of [sorted[i].x - gap, (sorted[i].x + sorted[i + 1].x) / 2, sorted[i + 1].x + gap]) {
+        if (Math.abs(out.x - cx) <= DISTRIBUTE_TOL) { out.x = cx; break; }
+      }
+    }
+  }
+
+  // Distance labels for live preview when ≥1 other shares an axis with the
+  // (snapped) position. Show all consecutive gaps in the column / row.
+  const distances: DistanceLabel[] = [];
+  const colX = others.filter(c => c.x === out.x);
+  if (colX.length >= 1) {
+    const all = [...colX.map(c => ({ x: c.x, y: c.y })), { x: out.x, y: out.y }]
+      .sort((a, b) => a.y - b.y);
+    for (let i = 0; i < all.length - 1; i++) {
+      distances.push({ a: all[i], b: all[i + 1], axis: 'y', px: all[i + 1].y - all[i].y });
+    }
+  }
+  const rowY = others.filter(c => c.y === out.y);
+  if (rowY.length >= 1) {
+    const all = [...rowY.map(c => ({ x: c.x, y: c.y })), { x: out.x, y: out.y }]
+      .sort((a, b) => a.x - b.x);
+    for (let i = 0; i < all.length - 1; i++) {
+      distances.push({ a: all[i], b: all[i + 1], axis: 'x', px: all[i + 1].x - all[i].x });
+    }
+  }
+
+  return { pos: out, guides, distances };
 }
 
 // Resolve the world-space point an attachment refers to
