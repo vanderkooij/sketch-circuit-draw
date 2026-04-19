@@ -564,59 +564,30 @@ export default function CircuitEditor() {
           return next;
         }),
       }));
-    } else if (selection.kind === 'wire' && selection.segment !== null && selection.segment !== undefined) {
-      // Drag a segment perpendicular to its orientation. Endpoint nodes that are
-      // attached (start/end with an attach) stay anchored — we insert helper nodes
-      // so only the interior bend moves. Free endpoints move with the segment.
+    } else if (selection.kind === 'wire' && selection.segLeft !== undefined && selection.segRight !== undefined) {
+      // Move the two segment endpoints perpendicular to the segment.
+      // Helper nodes were already inserted at mousedown if start/end were attached,
+      // so segLeft / segRight always point to free, movable nodes.
+      const li = selection.segLeft;
+      const ri = selection.segRight;
       setState(prev => ({
         ...prev,
         wires: prev.wires.map(w => {
           if (w.id !== selection.id) return w;
-          const segIdx = selection.segment!;
-          const a = w.nodes[segIdx], b = w.nodes[segIdx + 1];
+          const a = w.nodes[li], b = w.nodes[ri];
           if (!a || !b) return w;
           const horizontal = a.y === b.y;
           const vertical = a.x === b.x;
-          if (!horizontal && !vertical) return w; // diagonal segments not draggable
+          if (!horizontal && !vertical) return w;
           const nodes = w.nodes.map(n => ({ ...n }));
-          const isStartSeg = segIdx === 0;
-          const isEndSeg = segIdx === w.nodes.length - 2;
-          const startLocked = isStartSeg && !!w.startAttach;
-          const endLocked = isEndSeg && !!w.endAttach;
           if (horizontal) {
             const newY = snap(p.y);
-            // Move both endpoints of segment in Y
-            // For locked endpoints, insert a helper node so the lock point stays
-            let leftIdx = segIdx;
-            let rightIdx = segIdx + 1;
-            if (startLocked && isStartSeg) {
-              nodes.splice(1, 0, { x: a.x, y: newY });
-              leftIdx = 1; rightIdx = 2;
-            } else {
-              nodes[leftIdx] = { x: a.x, y: newY };
-              if (startLocked && isStartSeg) {/* unreachable */}
-            }
-            if (endLocked && isEndSeg) {
-              nodes.splice(rightIdx, 0, { x: b.x, y: newY });
-              // right point stays at b
-            } else {
-              nodes[rightIdx] = { x: b.x, y: newY };
-            }
+            nodes[li] = { x: a.x, y: newY };
+            nodes[ri] = { x: b.x, y: newY };
           } else {
             const newX = snap(p.x);
-            let leftIdx = segIdx;
-            let rightIdx = segIdx + 1;
-            if (startLocked && isStartSeg) {
-              nodes.splice(1, 0, { x: newX, y: a.y });
-              leftIdx = 1; rightIdx = 2;
-            } else {
-              nodes[leftIdx] = { x: newX, y: a.y };
-            }
-            if (endLocked && isEndSeg) {
-              nodes.splice(rightIdx, 0, { x: newX, y: b.y });
-            } else {
-              nodes[rightIdx] = { x: newX, y: b.y };
-            }
+            nodes[li] = { x: newX, y: a.y };
+            nodes[ri] = { x: newX, y: b.y };
           }
           return { ...w, nodes };
         }),
