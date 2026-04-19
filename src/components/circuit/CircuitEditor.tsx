@@ -592,6 +592,20 @@ export default function CircuitEditor() {
           wires: state.wires.map(w => w.id === wire.id ? { ...w, nodes: newNodes } : w),
         });
       }
+      return;
+    }
+
+    // In select mode, double-clicking empty space creates a new text label
+    if (tool === 'select') {
+      // Make sure we didn't double-click an existing element
+      for (const c of state.components) if (hitTestComponent(c, p)) return;
+      for (const w of state.wires) if (hitTestWire(w, p)) return;
+      const sp = snapPoint(p);
+      const label: TextLabel = { id: uid(), x: sp.x, y: sp.y, text: '' };
+      commit({ ...state, labels: [...state.labels, label] });
+      setEditingLabel(label.id);
+      setEditText('');
+      setEditPos(sp);
     }
   }, [canvasCoords, state, selection, commit]);
 
