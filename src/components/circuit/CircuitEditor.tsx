@@ -182,7 +182,8 @@ export default function CircuitEditor() {
   const [pan, setPan] = useState<Point>({ x: 0, y: 0 });
   const [panning, setPanning] = useState(false);
   const [panStart, setPanStart] = useState<Point>({ x: 0, y: 0 });
-  const [alignGuides, setAlignGuides] = useState<{ x?: number; y?: number }[]>([]);
+  const [alignGuides, setAlignGuides] = useState<AlignGuide[]>([]);
+  const [distLabels, setDistLabels] = useState<DistanceLabel[]>([]);
 
   const commit = useCallback((next: CircuitState) => {
     setState(next);
