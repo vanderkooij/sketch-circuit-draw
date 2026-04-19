@@ -510,6 +510,7 @@ export default function CircuitEditor() {
       const others = state.components.filter(c => c.id !== selection.id);
       const aligned = alignToOthers({ x: rawX, y: rawY }, others);
       setAlignGuides(aligned.guides);
+      setDistLabels(aligned.distances);
       setState(prev => syncWires({
         ...prev,
         components: prev.components.map(c =>
