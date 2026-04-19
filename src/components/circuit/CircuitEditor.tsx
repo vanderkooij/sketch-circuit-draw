@@ -87,9 +87,24 @@ function syncWires(s: CircuitState): CircuitState {
 
 type Selection =
   | { kind: 'component'; id: string }
-  | { kind: 'wire'; id: string; node: number | null }
+  | { kind: 'wire'; id: string; node: number | null; segment?: number | null }
   | { kind: 'label'; id: string }
   | null;
+
+// Hit-test which segment of a wire is under p (returns segment index = index of starting node)
+function hitTestWireSegment(w: Wire, p: Point): number | null {
+  for (let i = 0; i < w.nodes.length - 1; i++) {
+    const a = w.nodes[i], b = w.nodes[i + 1];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const lenSq = dx * dx + dy * dy;
+    if (lenSq === 0) continue;
+    let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq;
+    t = Math.max(0, Math.min(1, t));
+    const px = a.x + t * dx, py = a.y + t * dy;
+    if (Math.hypot(p.x - px, p.y - py) < 8) return i;
+  }
+  return null;
+}
 
 export default function CircuitEditor() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
