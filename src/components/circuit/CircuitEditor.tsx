@@ -263,9 +263,12 @@ export default function CircuitEditor() {
       const ch = canvasRef.current!.clientHeight;
       drawAlignmentGuides(ctx, alignGuides, cw, ch, pan.x, pan.y);
     }
+    if (distLabels.length > 0) {
+      drawDistanceLabels(ctx, distLabels);
+    }
 
     ctx.restore();
-  }, [state, selection, tool, wireStart, mousePos, hoverSnap, pan, editingLabel, dragging, wireOrient, alignGuides]);
+  }, [state, selection, tool, wireStart, mousePos, hoverSnap, pan, editingLabel, dragging, wireOrient, alignGuides, distLabels]);
 
   useEffect(() => {
     const handleResize = () => {
