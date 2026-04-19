@@ -607,7 +607,7 @@ export default function CircuitEditor() {
       setEditText('');
       setEditPos(sp);
     }
-  }, [canvasCoords, state, selection, commit]);
+  }, [canvasCoords, state, selection, commit, tool]);
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
