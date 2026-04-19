@@ -3,7 +3,7 @@ import type { CircuitState, Tool, Point, CircuitComponent, Wire, TextLabel, Wire
 import { GRID, snap, snapPoint, uid, orthogonalRoute, inferOrientation } from './types';
 import {
   clearCanvas, drawComponent, drawWire, drawLabel, drawPreviewWire, drawSnapHint,
-  drawAlignmentGuides,
+  drawAlignmentGuides, drawDistanceLabels,
   hitTestComponent, hitTestWire, hitTestWireNode, hitTestLabel,
   getTerminal, findSnapTarget,
 } from './renderer';
