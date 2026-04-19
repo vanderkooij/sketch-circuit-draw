@@ -455,9 +455,33 @@ export default function CircuitEditor() {
       }
       const segIdx = hitTestWireSegment(w, p);
       if (segIdx !== null) {
-        setSelection({ kind: 'wire', id: w.id, node: null, segment: segIdx });
+        // Restructure the wire so the segment has 2 interior nodes that we can
+        // freely move. Insert helper nodes at the start/end if they're attached
+        // (those endpoints must stay anchored). After this, simply moving the
+        // two segment nodes perpendicular grows/shrinks the neighbour segments.
+        const isStartSeg = segIdx === 0;
+        const isEndSeg = segIdx === w.nodes.length - 2;
+        const a = w.nodes[segIdx], b = w.nodes[segIdx + 1];
+        const newNodes = w.nodes.map(n => ({ ...n }));
+        let leftIdx = segIdx;
+        let rightIdx = segIdx + 1;
+        if (isStartSeg && w.startAttach) {
+          // Duplicate the anchor so leftIdx becomes a free copy at the same spot
+          newNodes.splice(1, 0, { ...a });
+          leftIdx = 1;
+          rightIdx = 2;
+        }
+        if (isEndSeg && w.endAttach) {
+          newNodes.splice(rightIdx, 0, { ...b });
+          // right anchor stays at the (new) last position; leftIdx unchanged
+        }
+        commit({
+          ...state,
+          wires: state.wires.map(x => x.id === w.id ? { ...x, nodes: newNodes } : x),
+        });
+        setSelection({ kind: 'wire', id: w.id, node: null, segment: segIdx, segLeft: leftIdx, segRight: rightIdx } as Selection);
         setDragging(true);
-        setDragOffset({ x: p.x, y: p.y });
+        setDragOffset({ x: 0, y: 0 });
         return;
       }
     }
