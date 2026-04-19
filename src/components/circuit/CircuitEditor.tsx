@@ -637,6 +637,10 @@ export default function CircuitEditor() {
         wires: state.wires.map(w => ({ ...w, nodes: cleanupWireNodes(w.nodes) })),
       };
       commit(cleaned);
+      // Clear segment indices on selection so the next click recomputes them
+      if (selection?.kind === 'wire' && selection.segment !== undefined) {
+        setSelection({ kind: 'wire', id: selection.id, node: null, segment: null });
+      }
     }
   }, [dragging, state, commit, panning]);
 
