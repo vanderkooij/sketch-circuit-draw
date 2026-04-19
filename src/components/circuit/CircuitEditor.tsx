@@ -712,7 +712,7 @@ export default function CircuitEditor() {
           }}>
             <div style={{ marginBottom: 4, color: '#555', fontWeight: 600 }}>Quick insert:</div>
             <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-              {['₀','₁','₂','₃','₄','₅','₆','₇','₈','₉','ₜ','ᵥ'].map(s => (
+              {['₀','₁','₂','₃','₄','₅','₆','₇','₈','₉','ₜₒₜ','ᵥ'].map(s => (
                 <button key={s} onMouseDown={e => { e.preventDefault(); setEditText(t => t + s); }}
                   style={{ width: 24, height: 24, border: '1px solid #ddd', borderRadius: 3,
                     background: '#fafafa', cursor: 'pointer', fontSize: 13, fontFamily: 'monospace' }}>
