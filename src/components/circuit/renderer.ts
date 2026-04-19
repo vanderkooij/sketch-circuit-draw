@@ -335,6 +335,58 @@ export function drawAlignmentGuides(
   ctx.restore();
 }
 
+// Draw distance labels between aligned components, with bracket marks
+export function drawDistanceLabels(
+  ctx: CanvasRenderingContext2D,
+  labels: { a: Point; b: Point; axis: 'x' | 'y'; px: number }[],
+) {
+  ctx.save();
+  ctx.strokeStyle = '#ff3b30';
+  ctx.fillStyle = '#ff3b30';
+  ctx.lineWidth = 1;
+  ctx.font = '10px monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const tick = 4;
+  for (const l of labels) {
+    if (l.px <= 0) continue;
+    if (l.axis === 'y') {
+      // Vertical gap on shared X column → draw a small tick at each end and label to the right
+      const x = l.a.x + 14;
+      ctx.beginPath();
+      ctx.moveTo(x - tick, l.a.y); ctx.lineTo(x + tick, l.a.y);
+      ctx.moveTo(x - tick, l.b.y); ctx.lineTo(x + tick, l.b.y);
+      ctx.moveTo(x, l.a.y); ctx.lineTo(x, l.b.y);
+      ctx.stroke();
+      // Label background
+      const text = `${Math.round(l.px)}`;
+      const m = ctx.measureText(text);
+      const tx = x + 8 + m.width / 2;
+      const ty = (l.a.y + l.b.y) / 2;
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(tx - m.width / 2 - 2, ty - 7, m.width + 4, 14);
+      ctx.fillStyle = '#ff3b30';
+      ctx.fillText(text, tx, ty);
+    } else {
+      const y = l.a.y - 14;
+      ctx.beginPath();
+      ctx.moveTo(l.a.x, y - tick); ctx.lineTo(l.a.x, y + tick);
+      ctx.moveTo(l.b.x, y - tick); ctx.lineTo(l.b.x, y + tick);
+      ctx.moveTo(l.a.x, y); ctx.lineTo(l.b.x, y);
+      ctx.stroke();
+      const text = `${Math.round(l.px)}`;
+      const m = ctx.measureText(text);
+      const tx = (l.a.x + l.b.x) / 2;
+      const ty = y - 10;
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(tx - m.width / 2 - 2, ty - 7, m.width + 4, 14);
+      ctx.fillStyle = '#ff3b30';
+      ctx.fillText(text, tx, ty);
+    }
+  }
+  ctx.restore();
+}
+
 // Highlight a snap target (terminal or wire-node) under the cursor
 export function drawSnapHint(ctx: CanvasRenderingContext2D, p: Point) {
   ctx.strokeStyle = '#000';
