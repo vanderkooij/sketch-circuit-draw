@@ -88,6 +88,26 @@ function alignToOthers(
   return { pos: out, guides, distances };
 }
 
+// Remove redundant nodes from a wire: collapse consecutive collinear nodes
+// and drop exact duplicates. Endpoints are preserved.
+function cleanupWireNodes(nodes: Point[]): Point[] {
+  if (nodes.length <= 2) return nodes;
+  const out: Point[] = [nodes[0]];
+  for (let i = 1; i < nodes.length - 1; i++) {
+    const prev = out[out.length - 1];
+    const cur = nodes[i];
+    const next = nodes[i + 1];
+    if (cur.x === prev.x && cur.y === prev.y) continue;
+    if (prev.x === cur.x && cur.x === next.x) continue;
+    if (prev.y === cur.y && cur.y === next.y) continue;
+    out.push(cur);
+  }
+  const last = nodes[nodes.length - 1];
+  const tail = out[out.length - 1];
+  if (last.x !== tail.x || last.y !== tail.y) out.push(last);
+  return out;
+}
+
 // Resolve the world-space point an attachment refers to
 function resolveAttach(s: CircuitState, a: WireAttachment): Point | null {
   if (a.kind === 'component') {
