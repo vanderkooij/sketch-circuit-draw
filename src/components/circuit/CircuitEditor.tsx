@@ -642,7 +642,7 @@ export default function CircuitEditor() {
         setSelection({ kind: 'wire', id: selection.id, node: null, segment: null });
       }
     }
-  }, [dragging, state, commit, panning]);
+  }, [dragging, state, commit, panning, selection]);
 
   const handleDoubleClick = useCallback((e: React.MouseEvent) => {
     const p = canvasCoords(e.clientX, e.clientY);
