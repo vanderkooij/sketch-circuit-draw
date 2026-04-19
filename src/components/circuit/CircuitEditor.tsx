@@ -631,7 +631,12 @@ export default function CircuitEditor() {
       setDragging(false);
       setAlignGuides([]);
       setDistLabels([]);
-      commit(state);
+      // After a wire-segment drag, simplify wires by removing collinear/duplicate nodes
+      const cleaned: CircuitState = {
+        ...state,
+        wires: state.wires.map(w => ({ ...w, nodes: cleanupWireNodes(w.nodes) })),
+      };
+      commit(cleaned);
     }
   }, [dragging, state, commit, panning]);
 
