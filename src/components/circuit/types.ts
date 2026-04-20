@@ -17,6 +17,8 @@ export interface CircuitComponent {
   x: number;
   y: number;
   rotation: 0 | 90 | 180 | 270;
+  // Switch only: open/closed state. Defaults to open (false).
+  closed?: boolean;
 }
 
 export type WireAttachment =
