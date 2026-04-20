@@ -204,6 +204,14 @@ export default function CircuitEditor() {
   const [panStart, setPanStart] = useState<Point>({ x: 0, y: 0 });
   const [alignGuides, setAlignGuides] = useState<AlignGuide[]>([]);
   const [distLabels, setDistLabels] = useState<DistanceLabel[]>([]);
+  const [lang, setLang] = useState<Lang>(() => {
+    if (typeof window === 'undefined') return 'en';
+    const saved = window.localStorage?.getItem('circuit.lang');
+    return (saved === 'nl' || saved === 'en') ? saved : 'en';
+  });
+  useEffect(() => {
+    if (typeof window !== 'undefined') window.localStorage?.setItem('circuit.lang', lang);
+  }, [lang]);
 
   const commit = useCallback((next: CircuitState) => {
     setState(next);
