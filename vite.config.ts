@@ -6,7 +6,4 @@ import tsconfigPaths from "vite-tsconfig-paths";
 export default defineConfig({
   plugins: [react(), tailwindcss(), tsconfigPaths()],
   base: "/sketch-circuit-draw/",
-  build: {
-    outDir: "dist",
-  },
 });
