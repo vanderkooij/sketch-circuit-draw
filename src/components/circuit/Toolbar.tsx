@@ -99,7 +99,7 @@ function CapacitorIcon() {
 }
 function InductorIcon() {
   return (
-    <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="#000" strokeWidth="1.3" strokeLinecap="round" fill="none">
+    <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="#000" strokeWidth="1.3" strokeLinecap="round">
       <line x1="1" y1="12" x2="4" y2="12" />
       <line x1="16" y1="12" x2="19" y2="12" />
       <path d="M 4 12 A 1.5 1.5 0 0 1 7 12 A 1.5 1.5 0 0 1 10 12 A 1.5 1.5 0 0 1 13 12 A 1.5 1.5 0 0 1 16 12" />
