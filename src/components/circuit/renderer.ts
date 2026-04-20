@@ -240,7 +240,186 @@ export function drawComponent(ctx: CanvasRenderingContext2D, c: CircuitComponent
     case 'led': return drawLED(ctx, c, selected);
     case 'motor': return drawMotor(ctx, c, selected);
     case 'lamp': return drawLamp(ctx, c, selected);
+    case 'ammeter': return drawMeter(ctx, c, selected, 'A');
+    case 'voltmeter': return drawMeter(ctx, c, selected, 'V');
+    case 'capacitor': return drawCapacitor(ctx, c, selected);
+    case 'inductor': return drawInductor(ctx, c, selected);
+    case 'switch': return drawSwitch(ctx, c, selected);
+    case 'diode': return drawDiode(ctx, c, selected);
+    case 'ground': return drawGround(ctx, c, selected);
+    case 'potentiometer': return drawPotentiometer(ctx, c, selected);
   }
+}
+
+function drawMeter(ctx: CanvasRenderingContext2D, c: CircuitComponent, selected: boolean, letter: string) {
+  ctx.save();
+  ctx.translate(c.x, c.y);
+  ctx.rotate((c.rotation * Math.PI) / 180);
+  ctx.strokeStyle = selected ? '#555' : '#000';
+  ctx.lineWidth = selected ? 2.5 : 1.5;
+  ctx.lineCap = 'round';
+  const r = GRID * 0.7;
+  ctx.beginPath();
+  ctx.moveTo(-GRID * 2, 0); ctx.lineTo(-r, 0);
+  ctx.moveTo(r, 0); ctx.lineTo(GRID * 2, 0);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.fillStyle = selected ? '#555' : '#000';
+  ctx.font = 'bold 12px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.rotate((-c.rotation * Math.PI) / 180);
+  ctx.fillText(letter, 0, 0);
+  if (selected) { ctx.rotate((c.rotation * Math.PI) / 180); drawSelectionBox(ctx, GRID * 2.2, GRID); }
+  ctx.restore();
+}
+
+function drawCapacitor(ctx: CanvasRenderingContext2D, c: CircuitComponent, selected: boolean) {
+  ctx.save();
+  ctx.translate(c.x, c.y);
+  ctx.rotate((c.rotation * Math.PI) / 180);
+  ctx.strokeStyle = selected ? '#555' : '#000';
+  ctx.lineWidth = selected ? 2.5 : 1.5;
+  ctx.lineCap = 'round';
+  const gap = GRID * 0.25;
+  ctx.beginPath();
+  ctx.moveTo(-GRID * 2, 0); ctx.lineTo(-gap, 0);
+  ctx.moveTo(gap, 0); ctx.lineTo(GRID * 2, 0);
+  ctx.moveTo(-gap, -GRID * 0.6); ctx.lineTo(-gap, GRID * 0.6);
+  ctx.moveTo(gap, -GRID * 0.6); ctx.lineTo(gap, GRID * 0.6);
+  ctx.stroke();
+  if (selected) drawSelectionBox(ctx, GRID * 2.2, GRID * 0.8);
+  ctx.restore();
+}
+
+function drawInductor(ctx: CanvasRenderingContext2D, c: CircuitComponent, selected: boolean) {
+  ctx.save();
+  ctx.translate(c.x, c.y);
+  ctx.rotate((c.rotation * Math.PI) / 180);
+  ctx.strokeStyle = selected ? '#555' : '#000';
+  ctx.lineWidth = selected ? 2.5 : 1.5;
+  ctx.lineCap = 'round';
+  const bumps = 4;
+  const w = GRID * 2; // total bumps span -w/2..w/2 = GRID
+  const r = GRID * 0.25;
+  ctx.beginPath();
+  ctx.moveTo(-GRID * 2, 0); ctx.lineTo(-bumps * r, 0);
+  for (let i = 0; i < bumps; i++) {
+    const cx = -bumps * r + r + i * 2 * r;
+    ctx.arc(cx, 0, r, Math.PI, 0, false);
+  }
+  ctx.moveTo(bumps * r, 0); ctx.lineTo(GRID * 2, 0);
+  ctx.stroke();
+  void w;
+  if (selected) drawSelectionBox(ctx, GRID * 2.2, GRID * 0.6);
+  ctx.restore();
+}
+
+function drawSwitch(ctx: CanvasRenderingContext2D, c: CircuitComponent, selected: boolean) {
+  ctx.save();
+  ctx.translate(c.x, c.y);
+  ctx.rotate((c.rotation * Math.PI) / 180);
+  ctx.strokeStyle = selected ? '#555' : '#000';
+  ctx.fillStyle = selected ? '#555' : '#000';
+  ctx.lineWidth = selected ? 2.5 : 1.5;
+  ctx.lineCap = 'round';
+  const a = GRID * 0.6; // hinge points
+  ctx.beginPath();
+  ctx.moveTo(-GRID * 2, 0); ctx.lineTo(-a, 0);
+  ctx.moveTo(a, 0); ctx.lineTo(GRID * 2, 0);
+  ctx.stroke();
+  // Hinge dots
+  ctx.beginPath(); ctx.arc(-a, 0, 2.5, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(a, 0, 2.5, 0, Math.PI * 2); ctx.fill();
+  // Lever
+  ctx.beginPath();
+  if (c.closed) {
+    ctx.moveTo(-a, 0); ctx.lineTo(a, 0);
+  } else {
+    ctx.moveTo(-a, 0); ctx.lineTo(a - GRID * 0.2, -GRID * 0.7);
+  }
+  ctx.stroke();
+  if (selected) drawSelectionBox(ctx, GRID * 2.2, GRID * 0.9);
+  ctx.restore();
+}
+
+function drawDiode(ctx: CanvasRenderingContext2D, c: CircuitComponent, selected: boolean) {
+  ctx.save();
+  ctx.translate(c.x, c.y);
+  ctx.rotate((c.rotation * Math.PI) / 180);
+  ctx.strokeStyle = selected ? '#555' : '#000';
+  ctx.fillStyle = 'transparent';
+  ctx.lineWidth = selected ? 2.5 : 1.5;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(-GRID * 2, 0); ctx.lineTo(-GRID * 0.6, 0);
+  ctx.moveTo(GRID * 0.6, 0); ctx.lineTo(GRID * 2, 0);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(-GRID * 0.6, -GRID * 0.6);
+  ctx.lineTo(-GRID * 0.6, GRID * 0.6);
+  ctx.lineTo(GRID * 0.6, 0);
+  ctx.closePath();
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(GRID * 0.6, -GRID * 0.6);
+  ctx.lineTo(GRID * 0.6, GRID * 0.6);
+  ctx.stroke();
+  if (selected) drawSelectionBox(ctx, GRID * 2.2, GRID * 0.9);
+  ctx.restore();
+}
+
+function drawGround(ctx: CanvasRenderingContext2D, c: CircuitComponent, selected: boolean) {
+  ctx.save();
+  ctx.translate(c.x, c.y);
+  ctx.rotate((c.rotation * Math.PI) / 180);
+  ctx.strokeStyle = selected ? '#555' : '#000';
+  ctx.lineWidth = selected ? 2.5 : 1.5;
+  ctx.lineCap = 'round';
+  // Connection lead from terminal 0 (left, at -GRID*2) toward symbol
+  ctx.beginPath();
+  ctx.moveTo(-GRID * 2, 0); ctx.lineTo(0, 0);
+  // Three horizontal bars (drawn vertically from connection)
+  ctx.moveTo(0, -GRID * 0.5); ctx.lineTo(0, GRID * 0.5);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(-GRID * 0.6, GRID * 0.1); ctx.lineTo(GRID * 0.6, GRID * 0.1);
+  ctx.moveTo(-GRID * 0.4, GRID * 0.3); ctx.lineTo(GRID * 0.4, GRID * 0.3);
+  ctx.moveTo(-GRID * 0.2, GRID * 0.5); ctx.lineTo(GRID * 0.2, GRID * 0.5);
+  ctx.stroke();
+  if (selected) drawSelectionBox(ctx, GRID * 2.2, GRID * 0.8);
+  ctx.restore();
+}
+
+function drawPotentiometer(ctx: CanvasRenderingContext2D, c: CircuitComponent, selected: boolean) {
+  ctx.save();
+  ctx.translate(c.x, c.y);
+  ctx.rotate((c.rotation * Math.PI) / 180);
+  ctx.strokeStyle = selected ? '#555' : '#000';
+  ctx.fillStyle = selected ? '#555' : '#000';
+  ctx.lineWidth = selected ? 2.5 : 1.5;
+  ctx.lineCap = 'round';
+  // Resistor body
+  ctx.beginPath();
+  ctx.moveTo(-GRID * 2, 0); ctx.lineTo(-GRID, 0);
+  ctx.moveTo(GRID, 0); ctx.lineTo(GRID * 2, 0);
+  ctx.stroke();
+  ctx.strokeRect(-GRID, -GRID * 0.4, GRID * 2, GRID * 0.8);
+  // Wiper arrow from above
+  ctx.beginPath();
+  ctx.moveTo(0, -GRID * 1.1); ctx.lineTo(0, -GRID * 0.4);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(0, -GRID * 0.4);
+  ctx.lineTo(-4, -GRID * 0.7);
+  ctx.lineTo(4, -GRID * 0.7);
+  ctx.closePath();
+  ctx.fill();
+  if (selected) drawSelectionBox(ctx, GRID * 2.2, GRID * 1.3);
+  ctx.restore();
 }
 
 export function drawWire(ctx: CanvasRenderingContext2D, w: Wire, selected: boolean, selectedNode: number | null) {
