@@ -667,6 +667,19 @@ export default function CircuitEditor() {
     const p = canvasCoords(e.clientX, e.clientY);
     const ctx = canvasRef.current!.getContext('2d')!;
 
+    // Switches: toggle open/closed when double-clicked
+    for (const c of state.components) {
+      if (c.type === 'switch' && hitTestComponent(c, p)) {
+        commit({
+          ...state,
+          components: state.components.map(x =>
+            x.id === c.id ? { ...x, closed: !x.closed } : x
+          ),
+        });
+        return;
+      }
+    }
+
     for (const l of state.labels) {
       if (hitTestLabel(ctx, l, p)) {
         setEditingLabel(l.id);
