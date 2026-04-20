@@ -338,6 +338,16 @@ export default function CircuitEditor() {
         setWireOrient(o => (o === 'HV' ? 'VH' : 'HV'));
         setWireOrientLocked(true);
       }
+      // W toggles between wire and select (the two most-used tools)
+      if (e.key === 'w' || e.key === 'W') {
+        if (tool === 'wire') {
+          setTool('select');
+        } else {
+          setTool('wire');
+          setWireStart(null);
+          setSelection(null);
+        }
+      }
     };
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
