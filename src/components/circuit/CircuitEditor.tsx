@@ -739,13 +739,13 @@ export default function CircuitEditor() {
   }, [editingLabel, editText, state, commit]);
 
   const statusText = (() => {
-    if (tool === 'wire' && wireStart) return `Klik eindpunt · Spatie = wissel L-richting (${wireOrient}) · Esc om af te breken`;
-    if (tool === 'wire') return 'Klik startpunt → beweeg in gewenste richting → klik eindpunt (spatie wisselt L-vorm)';
-    if (tool === 'select' && selection?.kind === 'component') return 'R / rechtermuisknop = roteren · Delete = verwijderen';
-    if (tool === 'select' && selection?.kind === 'wire') return 'Sleep nodes of segmenten · Dubbelklik wire om node toe te voegen';
-    if (tool === 'select') return 'Sleep componenten uit de toolbar · Dubbelklik = nieuw tekstvak · Esc = select tool · Alt+drag = pan';
-    if (tool === 'text') return 'Klik om label te plaatsen · Gebruik ₁₂₃ ₜₒₜ ᵥ Ω voor notatie';
-    if (tool === 'delete') return 'Klik op een element om het te verwijderen';
+    if (tool === 'wire' && wireStart) return tr(lang, 'status.wire.placing', { orient: wireOrient });
+    if (tool === 'wire') return tr(lang, 'status.wire.start');
+    if (tool === 'select' && selection?.kind === 'component') return tr(lang, 'status.select.component');
+    if (tool === 'select' && selection?.kind === 'wire') return tr(lang, 'status.select.wire');
+    if (tool === 'select') return tr(lang, 'status.select.empty');
+    if (tool === 'text') return tr(lang, 'status.text');
+    if (tool === 'delete') return tr(lang, 'status.delete');
     return '';
   })();
 
