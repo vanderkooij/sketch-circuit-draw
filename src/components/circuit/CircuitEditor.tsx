@@ -244,7 +244,7 @@ export default function CircuitEditor() {
       setSelection(null);
       setWireStart(null);
     }
-  }, [commit]);
+  }, [commit, lang]);
 
   const canvasCoords = useCallback((clientX: number, clientY: number): Point => {
     const r = canvasRef.current!.getBoundingClientRect();
@@ -820,14 +820,14 @@ export default function CircuitEditor() {
               minWidth: 120,
               display: 'block',
             }}
-            placeholder="R₁, U₂, Ω..."
+            placeholder={tr(lang, 'label.placeholder')}
           />
           <div style={{
             marginTop: 4, background: '#fff', border: '1px solid #e0e0e0',
             borderRadius: 4, padding: '6px 8px', fontSize: 11, color: '#888',
             fontFamily: 'monospace', lineHeight: 1.6, whiteSpace: 'pre-wrap',
           }}>
-            <div style={{ marginBottom: 4, color: '#555', fontWeight: 600 }}>Quick insert:</div>
+            <div style={{ marginBottom: 4, color: '#555', fontWeight: 600 }}>{tr(lang, 'label.quickInsert')}</div>
             <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
               {['₀','₁','₂','₃','₄','₅','₆','₇','₈','₉','ₜₒₜ','ᵥ'].map(s => (
                 <button key={s} onMouseDown={e => { e.preventDefault(); setEditText(t => t + s); }}
