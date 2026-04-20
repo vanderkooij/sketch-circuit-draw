@@ -750,6 +750,8 @@ export default function CircuitEditor() {
         onReset={reset}
         canUndo={histIdx > 0}
         canRedo={histIdx < history.length - 1}
+        lang={lang}
+        setLang={setLang}
       />
       <canvas
         ref={canvasRef}
