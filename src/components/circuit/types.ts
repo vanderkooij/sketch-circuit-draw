@@ -1,8 +1,8 @@
 export const GRID = 20;
 
-export type Tool = 'select' | 'voltage' | 'voltage_ac' | 'resistor' | 'led' | 'motor' | 'lamp' | 'wire' | 'text' | 'delete';
+export type Tool = 'select' | 'voltage' | 'voltage_ac' | 'resistor' | 'led' | 'motor' | 'lamp' | 'ammeter' | 'voltmeter' | 'capacitor' | 'inductor' | 'switch' | 'diode' | 'ground' | 'potentiometer' | 'wire' | 'text' | 'delete';
 
-export type ComponentType = 'voltage' | 'voltage_ac' | 'resistor' | 'led' | 'motor' | 'lamp';
+export type ComponentType = 'voltage' | 'voltage_ac' | 'resistor' | 'led' | 'motor' | 'lamp' | 'ammeter' | 'voltmeter' | 'capacitor' | 'inductor' | 'switch' | 'diode' | 'ground' | 'potentiometer';
 
 export type LRouteOrientation = 'HV' | 'VH';
 
@@ -17,6 +17,8 @@ export interface CircuitComponent {
   x: number;
   y: number;
   rotation: 0 | 90 | 180 | 270;
+  // Switch only: open/closed state. Defaults to open (false).
+  closed?: boolean;
 }
 
 export type WireAttachment =

@@ -8,6 +8,7 @@ import {
   getTerminal, findSnapTarget,
 } from './renderer';
 import { Toolbar } from './Toolbar';
+import { t as tr, type Lang } from './i18n';
 
 const EMPTY: CircuitState = { components: [], wires: [], labels: [] };
 
@@ -204,6 +205,14 @@ export default function CircuitEditor() {
   const [panStart, setPanStart] = useState<Point>({ x: 0, y: 0 });
   const [alignGuides, setAlignGuides] = useState<AlignGuide[]>([]);
   const [distLabels, setDistLabels] = useState<DistanceLabel[]>([]);
+  const [lang, setLang] = useState<Lang>(() => {
+    if (typeof window === 'undefined') return 'en';
+    const saved = window.localStorage?.getItem('circuit.lang');
+    return (saved === 'nl' || saved === 'en') ? saved : 'en';
+  });
+  useEffect(() => {
+    if (typeof window !== 'undefined') window.localStorage?.setItem('circuit.lang', lang);
+  }, [lang]);
 
   const commit = useCallback((next: CircuitState) => {
     setState(next);
@@ -230,12 +239,12 @@ export default function CircuitEditor() {
   }, [histIdx, history]);
 
   const reset = useCallback(() => {
-    if (window.confirm('Clear the entire canvas?')) {
+    if (window.confirm(tr(lang, 'btn.resetConfirm'))) {
       commit(EMPTY);
       setSelection(null);
       setWireStart(null);
     }
-  }, [commit]);
+  }, [commit, lang]);
 
   const canvasCoords = useCallback((clientX: number, clientY: number): Point => {
     const r = canvasRef.current!.getBoundingClientRect();
@@ -328,6 +337,16 @@ export default function CircuitEditor() {
         e.preventDefault();
         setWireOrient(o => (o === 'HV' ? 'VH' : 'HV'));
         setWireOrientLocked(true);
+      }
+      // W toggles between wire and select (the two most-used tools)
+      if (e.key === 'w' || e.key === 'W') {
+        if (tool === 'wire') {
+          setTool('select');
+        } else {
+          setTool('wire');
+          setWireStart(null);
+          setSelection(null);
+        }
       }
     };
     window.addEventListener('keydown', handleKey);
@@ -648,6 +667,19 @@ export default function CircuitEditor() {
     const p = canvasCoords(e.clientX, e.clientY);
     const ctx = canvasRef.current!.getContext('2d')!;
 
+    // Switches: toggle open/closed when double-clicked
+    for (const c of state.components) {
+      if (c.type === 'switch' && hitTestComponent(c, p)) {
+        commit({
+          ...state,
+          components: state.components.map(x =>
+            x.id === c.id ? { ...x, closed: !x.closed } : x
+          ),
+        });
+        return;
+      }
+    }
+
     for (const l of state.labels) {
       if (hitTestLabel(ctx, l, p)) {
         setEditingLabel(l.id);
@@ -730,13 +762,13 @@ export default function CircuitEditor() {
   }, [editingLabel, editText, state, commit]);
 
   const statusText = (() => {
-    if (tool === 'wire' && wireStart) return `Klik eindpunt · Spatie = wissel L-richting (${wireOrient}) · Esc om af te breken`;
-    if (tool === 'wire') return 'Klik startpunt → beweeg in gewenste richting → klik eindpunt (spatie wisselt L-vorm)';
-    if (tool === 'select' && selection?.kind === 'component') return 'R / rechtermuisknop = roteren · Delete = verwijderen';
-    if (tool === 'select' && selection?.kind === 'wire') return 'Sleep nodes of segmenten · Dubbelklik wire om node toe te voegen';
-    if (tool === 'select') return 'Sleep componenten uit de toolbar · Dubbelklik = nieuw tekstvak · Esc = select tool · Alt+drag = pan';
-    if (tool === 'text') return 'Klik om label te plaatsen · Gebruik ₁₂₃ ₜₒₜ ᵥ Ω voor notatie';
-    if (tool === 'delete') return 'Klik op een element om het te verwijderen';
+    if (tool === 'wire' && wireStart) return tr(lang, 'status.wire.placing', { orient: wireOrient });
+    if (tool === 'wire') return tr(lang, 'status.wire.start');
+    if (tool === 'select' && selection?.kind === 'component') return tr(lang, 'status.select.component');
+    if (tool === 'select' && selection?.kind === 'wire') return tr(lang, 'status.select.wire');
+    if (tool === 'select') return tr(lang, 'status.select.empty');
+    if (tool === 'text') return tr(lang, 'status.text');
+    if (tool === 'delete') return tr(lang, 'status.delete');
     return '';
   })();
 
@@ -750,6 +782,8 @@ export default function CircuitEditor() {
         onReset={reset}
         canUndo={histIdx > 0}
         canRedo={histIdx < history.length - 1}
+        lang={lang}
+        setLang={setLang}
       />
       <canvas
         ref={canvasRef}
@@ -786,14 +820,14 @@ export default function CircuitEditor() {
               minWidth: 120,
               display: 'block',
             }}
-            placeholder="R₁, U₂, Ω..."
+            placeholder={tr(lang, 'label.placeholder')}
           />
           <div style={{
             marginTop: 4, background: '#fff', border: '1px solid #e0e0e0',
             borderRadius: 4, padding: '6px 8px', fontSize: 11, color: '#888',
             fontFamily: 'monospace', lineHeight: 1.6, whiteSpace: 'pre-wrap',
           }}>
-            <div style={{ marginBottom: 4, color: '#555', fontWeight: 600 }}>Quick insert:</div>
+            <div style={{ marginBottom: 4, color: '#555', fontWeight: 600 }}>{tr(lang, 'label.quickInsert')}</div>
             <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
               {['₀','₁','₂','₃','₄','₅','₆','₇','₈','₉','ₜₒₜ','ᵥ'].map(s => (
                 <button key={s} onMouseDown={e => { e.preventDefault(); setEditText(t => t + s); }}
