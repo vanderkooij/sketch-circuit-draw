@@ -8,6 +8,7 @@ import {
   getTerminal, findSnapTarget,
 } from './renderer';
 import { Toolbar } from './Toolbar';
+import { t as tr, type Lang } from './i18n';
 
 const EMPTY: CircuitState = { components: [], wires: [], labels: [] };
 
