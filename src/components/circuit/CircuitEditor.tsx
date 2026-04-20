@@ -764,7 +764,10 @@ export default function CircuitEditor() {
   const statusText = (() => {
     if (tool === 'wire' && wireStart) return tr(lang, 'status.wire.placing', { orient: wireOrient });
     if (tool === 'wire') return tr(lang, 'status.wire.start');
-    if (tool === 'select' && selection?.kind === 'component') return tr(lang, 'status.select.component');
+    if (tool === 'select' && selection?.kind === 'component') {
+      const comp = state.components.find(c => c.id === selection.id);
+      return tr(lang, comp?.type === 'switch' ? 'status.select.switch' : 'status.select.component');
+    }
     if (tool === 'select' && selection?.kind === 'wire') return tr(lang, 'status.select.wire');
     if (tool === 'select') return tr(lang, 'status.select.empty');
     if (tool === 'text') return tr(lang, 'status.text');
