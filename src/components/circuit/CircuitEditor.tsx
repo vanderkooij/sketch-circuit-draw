@@ -239,7 +239,7 @@ export default function CircuitEditor() {
   }, [histIdx, history]);
 
   const reset = useCallback(() => {
-    if (window.confirm('Clear the entire canvas?')) {
+    if (window.confirm(tr(lang, 'btn.resetConfirm'))) {
       commit(EMPTY);
       setSelection(null);
       setWireStart(null);
