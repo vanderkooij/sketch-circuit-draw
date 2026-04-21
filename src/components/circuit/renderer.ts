@@ -248,6 +248,8 @@ export function drawComponent(ctx: CanvasRenderingContext2D, c: CircuitComponent
     case 'diode': return drawDiode(ctx, c, selected);
     case 'ground': return drawGround(ctx, c, selected);
     case 'potentiometer': return drawPotentiometer(ctx, c, selected);
+    case 'fuse': return drawFuse(ctx, c, selected);
+    case 'transformer': return drawTransformer(ctx, c, selected);
   }
 }
 
@@ -419,6 +421,89 @@ function drawPotentiometer(ctx: CanvasRenderingContext2D, c: CircuitComponent, s
   ctx.closePath();
   ctx.fill();
   if (selected) drawSelectionBox(ctx, GRID * 2.2, GRID * 1.3);
+  ctx.restore();
+}
+
+function drawFuse(ctx: CanvasRenderingContext2D, c: CircuitComponent, selected: boolean) {
+  ctx.save();
+  ctx.translate(c.x, c.y);
+  ctx.rotate((c.rotation * Math.PI) / 180);
+  ctx.strokeStyle = selected ? '#555' : '#000';
+  ctx.lineWidth = selected ? 2.5 : 1.5;
+  ctx.lineCap = 'round';
+
+  // Leads
+  ctx.beginPath();
+  ctx.moveTo(-GRID * 2, 0);
+  ctx.lineTo(-GRID * 0.8, 0);
+  ctx.moveTo(GRID * 0.8, 0);
+  ctx.lineTo(GRID * 2, 0);
+  ctx.stroke();
+
+  // Fuse body: narrow rectangle (smaller than resistor)
+  ctx.strokeRect(-GRID * 0.8, -GRID * 0.3, GRID * 1.6, GRID * 0.6);
+
+  // Line through the middle (fuse wire)
+  ctx.beginPath();
+  ctx.moveTo(-GRID * 0.8, 0);
+  ctx.lineTo(GRID * 0.8, 0);
+  ctx.stroke();
+
+  if (selected) drawSelectionBox(ctx, GRID * 2.2, GRID * 0.6);
+  ctx.restore();
+}
+
+function drawTransformer(ctx: CanvasRenderingContext2D, c: CircuitComponent, selected: boolean) {
+  ctx.save();
+  ctx.translate(c.x, c.y);
+  ctx.rotate((c.rotation * Math.PI) / 180);
+  ctx.strokeStyle = selected ? '#555' : '#000';
+  ctx.lineWidth = selected ? 2.5 : 1.5;
+  ctx.lineCap = 'round';
+
+  const bumps = 3;
+  const r = GRID * 0.25;
+  const gap = GRID * 0.15;
+
+  // Left lead
+  ctx.beginPath();
+  ctx.moveTo(-GRID * 2, 0);
+  ctx.lineTo(-bumps * r, 0);
+  ctx.stroke();
+
+  // Primary coil (left)
+  ctx.beginPath();
+  ctx.moveTo(-bumps * r, 0);
+  for (let i = 0; i < bumps; i++) {
+    const cx = -bumps * r + r + i * 2 * r;
+    ctx.arc(cx, 0, r, Math.PI, 0, false);
+  }
+  ctx.stroke();
+
+  // Core lines (two parallel vertical lines)
+  ctx.beginPath();
+  ctx.moveTo(-gap, -GRID * 0.7);
+  ctx.lineTo(-gap, GRID * 0.7);
+  ctx.moveTo(gap, -GRID * 0.7);
+  ctx.lineTo(gap, GRID * 0.7);
+  ctx.stroke();
+
+  // Secondary coil (right, mirrored)
+  ctx.beginPath();
+  ctx.moveTo(bumps * r, 0);
+  for (let i = 0; i < bumps; i++) {
+    const cx = bumps * r - r - i * 2 * r;
+    ctx.arc(cx, 0, r, 0, Math.PI, false);
+  }
+  ctx.stroke();
+
+  // Right lead
+  ctx.beginPath();
+  ctx.moveTo(bumps * r, 0);
+  ctx.lineTo(GRID * 2, 0);
+  ctx.stroke();
+
+  if (selected) drawSelectionBox(ctx, GRID * 2.2, GRID * 0.9);
   ctx.restore();
 }
 
