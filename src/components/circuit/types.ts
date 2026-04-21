@@ -1,8 +1,8 @@
 export const GRID = 20;
 
-export type Tool = 'select' | 'voltage' | 'voltage_ac' | 'resistor' | 'led' | 'motor' | 'lamp' | 'ammeter' | 'voltmeter' | 'capacitor' | 'inductor' | 'switch' | 'diode' | 'ground' | 'potentiometer' | 'wire' | 'text' | 'delete';
+export type Tool = 'select' | 'voltage' | 'voltage_ac' | 'resistor' | 'led' | 'motor' | 'lamp' | 'ammeter' | 'voltmeter' | 'capacitor' | 'inductor' | 'switch' | 'diode' | 'ground' | 'potentiometer' | 'fuse' | 'transformer' | 'wire' | 'text' | 'delete';
 
-export type ComponentType = 'voltage' | 'voltage_ac' | 'resistor' | 'led' | 'motor' | 'lamp' | 'ammeter' | 'voltmeter' | 'capacitor' | 'inductor' | 'switch' | 'diode' | 'ground' | 'potentiometer';
+export type ComponentType = 'voltage' | 'voltage_ac' | 'resistor' | 'led' | 'motor' | 'lamp' | 'ammeter' | 'voltmeter' | 'capacitor' | 'inductor' | 'switch' | 'diode' | 'ground' | 'potentiometer' | 'fuse' | 'transformer';
 
 export type LRouteOrientation = 'HV' | 'VH';
 
