@@ -53,6 +53,13 @@ function LEDIcon() {
       <line x1="14" y1="10" x2="19" y2="10" />
       <polygon points="6,5 6,15 14,10" />
       <line x1="14" y1="5" x2="14" y2="15" />
+      {/* Light emission arrows */}
+      <line x1="13" y1="4" x2="15.5" y2="1.5" strokeWidth="1" />
+      <line x1="15.5" y1="1.5" x2="14.2" y2="2.2" strokeWidth="1" />
+      <line x1="15.5" y1="1.5" x2="15" y2="2.8" strokeWidth="1" />
+      <line x1="15.5" y1="5.5" x2="18" y2="3" strokeWidth="1" />
+      <line x1="18" y1="3" x2="16.7" y2="3.7" strokeWidth="1" />
+      <line x1="18" y1="3" x2="17.5" y2="4.3" strokeWidth="1" />
     </svg>
   );
 }
@@ -148,6 +155,28 @@ function PotmeterIcon() {
     </svg>
   );
 }
+function FuseIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="#000" strokeWidth="1.3" strokeLinecap="round">
+      <line x1="1" y1="10" x2="5" y2="10" />
+      <line x1="15" y1="10" x2="19" y2="10" />
+      <rect x="5" y="7.5" width="10" height="5" />
+      <line x1="5" y1="10" x2="15" y2="10" />
+    </svg>
+  );
+}
+function TransformerIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="#000" strokeWidth="1.3" strokeLinecap="round">
+      <line x1="1" y1="10" x2="3" y2="10" />
+      <line x1="17" y1="10" x2="19" y2="10" />
+      <path d="M 3 10 A 1.5 1.5 0 0 1 6 10 A 1.5 1.5 0 0 1 9 10" />
+      <path d="M 17 10 A 1.5 1.5 0 0 0 14 10 A 1.5 1.5 0 0 0 11 10" />
+      <line x1="9.8" y1="5" x2="9.8" y2="15" />
+      <line x1="11.2" y1="5" x2="11.2" y2="15" />
+    </svg>
+  );
+}
 function WireIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="#000" strokeWidth="1.5" strokeLinecap="round">
@@ -171,7 +200,7 @@ const sources: ToolDef[] = [
 const loads: ToolDef[] = [
   { id: 'resistor', key: 'tool.resistor', icon: <ResistorIcon /> },
   { id: 'led', key: 'tool.led', icon: <LEDIcon /> },
-  { id: 'motor', key: 'tool.motor', icon: <MotorIcon /> },
+  { id: 'switch', key: 'tool.switch', icon: <SwitchIcon /> },
   { id: 'lamp', key: 'tool.lamp', icon: <LampIcon /> },
 ];
 const meters: ToolDef[] = [
@@ -181,8 +210,10 @@ const meters: ToolDef[] = [
 const advanced: ToolDef[] = [
   { id: 'capacitor', key: 'tool.capacitor', icon: <CapacitorIcon /> },
   { id: 'inductor', key: 'tool.inductor', icon: <InductorIcon /> },
-  { id: 'switch', key: 'tool.switch', icon: <SwitchIcon /> },
   { id: 'diode', key: 'tool.diode', icon: <DiodeIcon /> },
+  { id: 'motor', key: 'tool.motor', icon: <MotorIcon /> },
+  { id: 'fuse', key: 'tool.fuse', icon: <FuseIcon /> },
+  { id: 'transformer', key: 'tool.transformer', icon: <TransformerIcon /> },
   { id: 'ground', key: 'tool.ground', icon: <GroundIcon /> },
   { id: 'potentiometer', key: 'tool.potentiometer', icon: <PotmeterIcon /> },
 ];
@@ -190,6 +221,7 @@ const advanced: ToolDef[] = [
 const componentTools = new Set<Tool>([
   'voltage', 'voltage_ac', 'resistor', 'led', 'motor', 'lamp',
   'ammeter', 'voltmeter', 'capacitor', 'inductor', 'switch', 'diode', 'ground', 'potentiometer',
+  'fuse', 'transformer',
 ]);
 
 function ToolButton({ t: tdef, current, onPick, label, draggable }: {
