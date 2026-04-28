@@ -1,8 +1,8 @@
 export const GRID = 20;
 
-export type Tool = 'select' | 'voltage' | 'voltage_ac' | 'resistor' | 'led' | 'motor' | 'lamp' | 'ammeter' | 'voltmeter' | 'capacitor' | 'inductor' | 'switch' | 'diode' | 'ground' | 'potentiometer' | 'fuse' | 'transformer' | 'wire' | 'text' | 'delete';
+export type Tool = 'select' | 'voltage' | 'voltage_ac' | 'resistor' | 'led' | 'motor' | 'lamp' | 'ammeter' | 'voltmeter' | 'capacitor' | 'inductor' | 'switch' | 'diode' | 'ground' | 'potentiometer' | 'fuse' | 'transformer' | 'transistor' | 'ntc' | 'ptc' | 'ldr' | 'pushbutton' | 'buzzer' | 'relay' | 'wire' | 'text' | 'delete';
 
-export type ComponentType = 'voltage' | 'voltage_ac' | 'resistor' | 'led' | 'motor' | 'lamp' | 'ammeter' | 'voltmeter' | 'capacitor' | 'inductor' | 'switch' | 'diode' | 'ground' | 'potentiometer' | 'fuse' | 'transformer';
+export type ComponentType = 'voltage' | 'voltage_ac' | 'resistor' | 'led' | 'motor' | 'lamp' | 'ammeter' | 'voltmeter' | 'capacitor' | 'inductor' | 'switch' | 'diode' | 'ground' | 'potentiometer' | 'fuse' | 'transformer' | 'transistor' | 'ntc' | 'ptc' | 'ldr' | 'pushbutton' | 'buzzer' | 'relay';
 
 export type LRouteOrientation = 'HV' | 'VH';
 
@@ -22,8 +22,10 @@ export interface CircuitComponent {
 }
 
 export type WireAttachment =
-  | { kind: 'component'; componentId: string; terminal: 0 | 1 }
-  | { kind: 'wire'; wireId: string; nodeIndex: number };
+  | { kind: 'component'; componentId: string; terminal: number }
+  | { kind: 'wire'; wireId: string; nodeIndex: number }
+  // Transient — only lives in wireStart state during drawing, never committed to CircuitState.
+  | { kind: 'wire-segment'; wireId: string; segmentIndex: number; point: Point };
 
 export interface Wire {
   id: string;
@@ -43,6 +45,9 @@ export interface CircuitState {
   components: CircuitComponent[];
   wires: Wire[];
   labels: TextLabel[];
+  // "x,y" keys of crossing points the user has marked as electrically connected (dot).
+  // All other crossings are drawn as an arc (not connected).
+  connectedCrossings: string[];
 }
 
 export function snap(v: number): number {

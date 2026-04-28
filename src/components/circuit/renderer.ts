@@ -1,5 +1,5 @@
 import type { CircuitComponent, Wire, TextLabel, Point, WireAttachment, LRouteOrientation } from './types';
-import { GRID, orthogonalRoute } from './types';
+import { GRID, snap, orthogonalRoute } from './types';
 
 export function clearCanvas(ctx: CanvasRenderingContext2D, w: number, h: number) {
   ctx.fillStyle = '#fff';
@@ -250,6 +250,13 @@ export function drawComponent(ctx: CanvasRenderingContext2D, c: CircuitComponent
     case 'potentiometer': return drawPotentiometer(ctx, c, selected);
     case 'fuse': return drawFuse(ctx, c, selected);
     case 'transformer': return drawTransformer(ctx, c, selected);
+    case 'transistor': return drawTransistor(ctx, c, selected);
+    case 'ntc': return drawThermistor(ctx, c, selected, 'NTC');
+    case 'ptc': return drawThermistor(ctx, c, selected, 'PTC');
+    case 'ldr': return drawLDR(ctx, c, selected);
+    case 'pushbutton': return drawPushButton(ctx, c, selected);
+    case 'buzzer': return drawBuzzer(ctx, c, selected);
+    case 'relay': return drawRelay(ctx, c, selected);
   }
 }
 
@@ -381,18 +388,17 @@ function drawGround(ctx: CanvasRenderingContext2D, c: CircuitComponent, selected
   ctx.strokeStyle = selected ? '#555' : '#000';
   ctx.lineWidth = selected ? 2.5 : 1.5;
   ctx.lineCap = 'round';
-  // Connection lead from terminal 0 (left, at -GRID*2) toward symbol
+  // Lead from terminal (top, at 0,-GRID*2) down to first bar
   ctx.beginPath();
-  ctx.moveTo(-GRID * 2, 0); ctx.lineTo(0, 0);
-  // Three horizontal bars (drawn vertically from connection)
-  ctx.moveTo(0, -GRID * 0.5); ctx.lineTo(0, GRID * 0.5);
+  ctx.moveTo(0, -GRID * 2); ctx.lineTo(0, -GRID * 0.3);
   ctx.stroke();
+  // Three bars of decreasing width
   ctx.beginPath();
-  ctx.moveTo(-GRID * 0.6, GRID * 0.1); ctx.lineTo(GRID * 0.6, GRID * 0.1);
-  ctx.moveTo(-GRID * 0.4, GRID * 0.3); ctx.lineTo(GRID * 0.4, GRID * 0.3);
-  ctx.moveTo(-GRID * 0.2, GRID * 0.5); ctx.lineTo(GRID * 0.2, GRID * 0.5);
+  ctx.moveTo(-GRID * 0.6, -GRID * 0.3); ctx.lineTo(GRID * 0.6, -GRID * 0.3);
+  ctx.moveTo(-GRID * 0.4,  GRID * 0.1); ctx.lineTo(GRID * 0.4,  GRID * 0.1);
+  ctx.moveTo(-GRID * 0.2,  GRID * 0.5); ctx.lineTo(GRID * 0.2,  GRID * 0.5);
   ctx.stroke();
-  if (selected) drawSelectionBox(ctx, GRID * 2.2, GRID * 0.8);
+  if (selected) drawSelectionBox(ctx, GRID * 0.8, GRID * 2.2);
   ctx.restore();
 }
 
@@ -410,7 +416,7 @@ function drawPotentiometer(ctx: CanvasRenderingContext2D, c: CircuitComponent, s
   ctx.moveTo(GRID, 0); ctx.lineTo(GRID * 2, 0);
   ctx.stroke();
   ctx.strokeRect(-GRID, -GRID * 0.4, GRID * 2, GRID * 0.8);
-  // Wiper arrow from above
+  // Wiper: lead from terminal (0, -GRID*1.1) down to arrowhead at body top
   ctx.beginPath();
   ctx.moveTo(0, -GRID * 1.1); ctx.lineTo(0, -GRID * 0.4);
   ctx.stroke();
@@ -419,6 +425,10 @@ function drawPotentiometer(ctx: CanvasRenderingContext2D, c: CircuitComponent, s
   ctx.lineTo(-4, -GRID * 0.7);
   ctx.lineTo(4, -GRID * 0.7);
   ctx.closePath();
+  ctx.fill();
+  // Wiper terminal dot
+  ctx.beginPath();
+  ctx.arc(0, -GRID * 1.1, 2.5, 0, Math.PI * 2);
   ctx.fill();
   if (selected) drawSelectionBox(ctx, GRID * 2.2, GRID * 1.3);
   ctx.restore();
@@ -462,48 +472,294 @@ function drawTransformer(ctx: CanvasRenderingContext2D, c: CircuitComponent, sel
   ctx.lineCap = 'round';
 
   const bumps = 3;
-  const r = GRID * 0.25;
-  const gap = GRID * 0.15;
+  const r = GRID / 3; // 3 bumps × 2r = 2*GRID → spans from -GRID to +GRID
+  const spine = GRID * 1.2; // x-position of coil spines
+  const coreGap = GRID * 0.15;
 
-  // Left lead
+  // Primary leads (top and bottom left)
   ctx.beginPath();
-  ctx.moveTo(-GRID * 2, 0);
-  ctx.lineTo(-bumps * r, 0);
+  ctx.moveTo(-GRID * 2, -GRID); ctx.lineTo(-spine, -GRID);
+  ctx.moveTo(-GRID * 2, GRID);  ctx.lineTo(-spine, GRID);
   ctx.stroke();
 
-  // Primary coil (left)
+  // Primary coil: vertical, bumps face right (inward toward core)
   ctx.beginPath();
-  ctx.moveTo(-bumps * r, 0);
+  ctx.moveTo(-spine, -GRID);
   for (let i = 0; i < bumps; i++) {
-    const cx = -bumps * r + r + i * 2 * r;
-    ctx.arc(cx, 0, r, Math.PI, 0, false);
+    const cy = -GRID + r + i * 2 * r;
+    ctx.arc(-spine, cy, r, -Math.PI / 2, Math.PI / 2, false);
   }
   ctx.stroke();
 
-  // Core lines (two parallel vertical lines)
+  // Core lines
   ctx.beginPath();
-  ctx.moveTo(-gap, -GRID * 0.7);
-  ctx.lineTo(-gap, GRID * 0.7);
-  ctx.moveTo(gap, -GRID * 0.7);
-  ctx.lineTo(gap, GRID * 0.7);
+  ctx.moveTo(-coreGap, -GRID * 0.8); ctx.lineTo(-coreGap, GRID * 0.8);
+  ctx.moveTo(coreGap, -GRID * 0.8);  ctx.lineTo(coreGap, GRID * 0.8);
   ctx.stroke();
 
-  // Secondary coil (right, mirrored)
+  // Secondary coil: vertical, bumps face left (inward toward core)
   ctx.beginPath();
-  ctx.moveTo(bumps * r, 0);
+  ctx.moveTo(spine, -GRID);
   for (let i = 0; i < bumps; i++) {
-    const cx = bumps * r - r - i * 2 * r;
-    ctx.arc(cx, 0, r, 0, Math.PI, false);
+    const cy = -GRID + r + i * 2 * r;
+    ctx.arc(spine, cy, r, -Math.PI / 2, Math.PI / 2, true);
   }
   ctx.stroke();
 
-  // Right lead
+  // Secondary leads (top and bottom right)
   ctx.beginPath();
-  ctx.moveTo(bumps * r, 0);
-  ctx.lineTo(GRID * 2, 0);
+  ctx.moveTo(GRID * 2, -GRID); ctx.lineTo(spine, -GRID);
+  ctx.moveTo(GRID * 2, GRID);  ctx.lineTo(spine, GRID);
   ctx.stroke();
 
+  if (selected) drawSelectionBox(ctx, GRID * 2.2, GRID * 1.2);
+  ctx.restore();
+}
+
+function drawTransistor(ctx: CanvasRenderingContext2D, c: CircuitComponent, selected: boolean) {
+  ctx.save();
+  ctx.translate(c.x, c.y);
+  ctx.rotate((c.rotation * Math.PI) / 180);
+  ctx.strokeStyle = selected ? '#555' : '#000';
+  ctx.fillStyle = selected ? '#555' : '#000';
+  ctx.lineWidth = selected ? 2.5 : 1.5;
+  ctx.lineCap = 'round';
+
+  // Base lead: terminal 0 (-GRID*2, 0) → base bar
+  ctx.beginPath();
+  ctx.moveTo(-GRID * 2, 0); ctx.lineTo(-GRID * 0.5, 0);
+  ctx.stroke();
+
+  // Base bar (vertical)
+  ctx.beginPath();
+  ctx.moveTo(-GRID * 0.5, -GRID); ctx.lineTo(-GRID * 0.5, GRID);
+  ctx.stroke();
+
+  // Collector: base bar → terminal 1 (GRID*2, -GRID*1.5)
+  ctx.beginPath();
+  ctx.moveTo(-GRID * 0.5, -GRID * 0.6); ctx.lineTo(GRID * 2, -GRID * 1.5);
+  ctx.stroke();
+
+  // Emitter: base bar → terminal 2 (GRID*2, GRID*1.5)
+  const ex1 = -GRID * 0.5, ey1 = GRID * 0.6;
+  const ex2 = GRID * 2, ey2 = GRID * 1.5;
+  ctx.beginPath();
+  ctx.moveTo(ex1, ey1); ctx.lineTo(ex2, ey2);
+  ctx.stroke();
+
+  // Emitter arrow (filled triangle near tip)
+  const edx = ex2 - ex1, edy = ey2 - ey1;
+  const elen = Math.sqrt(edx * edx + edy * edy);
+  const enx = edx / elen, eny = edy / elen;
+  const epx = -eny, epy = enx;
+  const aLen = 7, aW = 3.5;
+  const ax = ex2 - aLen * enx, ay = ey2 - aLen * eny;
+  ctx.beginPath();
+  ctx.moveTo(ex2, ey2);
+  ctx.lineTo(ax + aW * epx, ay + aW * epy);
+  ctx.lineTo(ax - aW * epx, ay - aW * epy);
+  ctx.closePath();
+  ctx.fill();
+
+  if (selected) drawSelectionBox(ctx, GRID * 2.2, GRID * 1.7);
+  ctx.restore();
+}
+
+function drawThermistor(ctx: CanvasRenderingContext2D, c: CircuitComponent, selected: boolean, label: string) {
+  ctx.save();
+  ctx.translate(c.x, c.y);
+  ctx.rotate((c.rotation * Math.PI) / 180);
+  const color = selected ? '#555' : '#000';
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.lineWidth = selected ? 2.5 : 1.5;
+  ctx.lineCap = 'round';
+  // Leads + body
+  ctx.beginPath();
+  ctx.moveTo(-GRID * 2, 0); ctx.lineTo(-GRID, 0);
+  ctx.moveTo(GRID, 0); ctx.lineTo(GRID * 2, 0);
+  ctx.stroke();
+  ctx.strokeRect(-GRID, -GRID * 0.4, GRID * 2, GRID * 0.8);
+  // Diagonal line extending from lower-left through body to upper-right, exiting the body
+  const cx = GRID * 1.5, cy = -GRID * 0.6;
+  ctx.beginPath();
+  ctx.moveTo(-GRID * 0.9, GRID * 0.38); ctx.lineTo(cx, cy);
+  ctx.stroke();
+  // Small circle at tip with "−" (NTC) or "+" (PTC)
+  const cr = GRID * 0.22;
+  ctx.beginPath();
+  ctx.arc(cx, cy, cr, 0, Math.PI * 2);
+  ctx.fillStyle = '#fff';
+  ctx.fill();
+  ctx.strokeStyle = color;
+  ctx.stroke();
+  ctx.fillStyle = color;
+  ctx.font = `bold ${GRID * 0.32}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(label === 'NTC' ? '−' : '+', cx, cy + 0.5);
   if (selected) drawSelectionBox(ctx, GRID * 2.2, GRID * 0.9);
+  ctx.restore();
+}
+
+function drawLDR(ctx: CanvasRenderingContext2D, c: CircuitComponent, selected: boolean) {
+  ctx.save();
+  ctx.translate(c.x, c.y);
+  ctx.rotate((c.rotation * Math.PI) / 180);
+  ctx.strokeStyle = selected ? '#555' : '#000';
+  ctx.fillStyle = selected ? '#555' : '#000';
+  ctx.lineWidth = selected ? 2.5 : 1.5;
+  ctx.lineCap = 'round';
+  // Leads + body
+  ctx.beginPath();
+  ctx.moveTo(-GRID * 2, 0); ctx.lineTo(-GRID, 0);
+  ctx.moveTo(GRID, 0); ctx.lineTo(GRID * 2, 0);
+  ctx.stroke();
+  ctx.strokeRect(-GRID, -GRID * 0.4, GRID * 2, GRID * 0.8);
+  // Two parallel arrows from upper-right at 45°, tips landing on top edge of body
+  ctx.lineWidth = selected ? 2 : 1.1;
+  const arrows: [number, number, number, number][] = [
+    [GRID * 1.3, -GRID * 1.4, GRID * 0.3, -GRID * 0.4],
+    [GRID * 1.8, -GRID * 1.4, GRID * 0.8, -GRID * 0.4],
+  ];
+  for (const [sx, sy, ex, ey] of arrows) {
+    ctx.beginPath();
+    ctx.moveTo(sx, sy); ctx.lineTo(ex, ey);
+    ctx.stroke();
+    const dx = ex - sx, dy = ey - sy;
+    const len = Math.sqrt(dx * dx + dy * dy);
+    const nx = dx / len, ny = dy / len;
+    const px = -ny, py = nx;
+    const aL = 5, aW = 2.5;
+    const bx = ex - aL * nx, by = ey - aL * ny;
+    ctx.beginPath();
+    ctx.moveTo(ex, ey);
+    ctx.lineTo(bx + aW * px, by + aW * py);
+    ctx.lineTo(bx - aW * px, by - aW * py);
+    ctx.closePath();
+    ctx.fill();
+  }
+  if (selected) drawSelectionBox(ctx, GRID * 2.2, GRID * 1.2);
+  ctx.restore();
+}
+
+function drawPushButton(ctx: CanvasRenderingContext2D, c: CircuitComponent, selected: boolean) {
+  ctx.save();
+  ctx.translate(c.x, c.y);
+  ctx.rotate((c.rotation * Math.PI) / 180);
+  ctx.strokeStyle = selected ? '#555' : '#000';
+  ctx.fillStyle = selected ? '#555' : '#000';
+  ctx.lineWidth = selected ? 2.5 : 1.5;
+  ctx.lineCap = 'round';
+  const a = GRID * 0.6;
+  // Leads
+  ctx.beginPath();
+  ctx.moveTo(-GRID * 2, 0); ctx.lineTo(-a, 0);
+  ctx.moveTo(a, 0); ctx.lineTo(GRID * 2, 0);
+  ctx.stroke();
+  // Contact dots
+  ctx.beginPath(); ctx.arc(-a, 0, 2.5, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(a, 0, 2.5, 0, Math.PI * 2); ctx.fill();
+  // Floating bar: above when open, connecting when closed
+  const barY = c.closed ? 0 : -GRID * 0.7;
+  ctx.beginPath();
+  ctx.moveTo(-a, barY); ctx.lineTo(a, barY);
+  ctx.stroke();
+  // Vertical actuator lines when open
+  if (!c.closed) {
+    ctx.lineWidth = selected ? 1.5 : 1;
+    ctx.beginPath();
+    ctx.moveTo(0, barY); ctx.lineTo(0, -GRID * 1.1);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(0, -GRID * 1.25, GRID * 0.18, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  if (selected) drawSelectionBox(ctx, GRID * 2.2, GRID * 1.4);
+  ctx.restore();
+}
+
+function drawBuzzer(ctx: CanvasRenderingContext2D, c: CircuitComponent, selected: boolean) {
+  ctx.save();
+  ctx.translate(c.x, c.y);
+  ctx.rotate((c.rotation * Math.PI) / 180);
+  ctx.strokeStyle = selected ? '#555' : '#000';
+  ctx.lineWidth = selected ? 2.5 : 1.5;
+  ctx.lineCap = 'round';
+  const r = GRID * 0.65;
+  // Leads
+  ctx.beginPath();
+  ctx.moveTo(-GRID * 2, 0); ctx.lineTo(-r, 0);
+  ctx.moveTo(r, 0); ctx.lineTo(GRID * 2, 0);
+  ctx.stroke();
+  // Circle body
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.stroke();
+  // "Bz" label (rotation-corrected, like motor/meter)
+  ctx.fillStyle = selected ? '#555' : '#000';
+  ctx.font = 'bold 11px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.rotate((-c.rotation * Math.PI) / 180);
+  ctx.fillText('Bz', 0, 0);
+  if (selected) { ctx.rotate((c.rotation * Math.PI) / 180); drawSelectionBox(ctx, GRID * 2.2, GRID); }
+  ctx.restore();
+}
+
+function drawRelay(ctx: CanvasRenderingContext2D, c: CircuitComponent, selected: boolean) {
+  ctx.save();
+  ctx.translate(c.x, c.y);
+  ctx.rotate((c.rotation * Math.PI) / 180);
+  ctx.strokeStyle = selected ? '#555' : '#000';
+  ctx.fillStyle = selected ? '#555' : '#000';
+  ctx.lineWidth = selected ? 2.5 : 1.5;
+  ctx.lineCap = 'round';
+
+  const coilX = -GRID * 1.2;
+  const r = GRID / 2; // 2 bumps × 2r = 2*GRID → spans -GRID to +GRID
+
+  // Coil leads
+  ctx.beginPath();
+  ctx.moveTo(-GRID * 2, -GRID); ctx.lineTo(coilX, -GRID);
+  ctx.moveTo(-GRID * 2,  GRID); ctx.lineTo(coilX,  GRID);
+  ctx.stroke();
+
+  // Coil: 2 vertical bumps facing right (toward core)
+  ctx.beginPath();
+  ctx.moveTo(coilX, -GRID);
+  for (let i = 0; i < 2; i++) {
+    const cy = -GRID + r + i * 2 * r;
+    ctx.arc(coilX, cy, r, -Math.PI / 2, Math.PI / 2, false);
+  }
+  ctx.stroke();
+
+  // Dashed coupling line
+  ctx.save();
+  ctx.setLineDash([3, 3]);
+  ctx.beginPath();
+  ctx.moveTo(0, -GRID * 0.8); ctx.lineTo(0, GRID * 0.8);
+  ctx.stroke();
+  ctx.restore();
+
+  // Switch leads
+  const contactX = GRID * 0.8;
+  ctx.beginPath();
+  ctx.moveTo(GRID * 2, -GRID); ctx.lineTo(contactX, -GRID);
+  ctx.moveTo(GRID * 2,  GRID); ctx.lineTo(contactX,  GRID);
+  ctx.stroke();
+
+  // Contact dots
+  ctx.beginPath(); ctx.arc(contactX, -GRID, 2.5, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(contactX,  GRID, 2.5, 0, Math.PI * 2); ctx.fill();
+
+  // Switch lever (open by default)
+  ctx.beginPath();
+  ctx.moveTo(contactX, GRID);
+  ctx.lineTo(contactX + GRID * 0.25, -GRID + GRID * 0.35);
+  ctx.stroke();
+
+  if (selected) drawSelectionBox(ctx, GRID * 2.2, GRID * 1.2);
   ctx.restore();
 }
 
@@ -551,9 +807,9 @@ export function drawLabel(ctx: CanvasRenderingContext2D, l: TextLabel, selected:
   }
 }
 
-// Live preview: orthogonal L-shape from start to cursor
-export function drawPreviewWire(ctx: CanvasRenderingContext2D, start: Point, cursor: Point, orientation: LRouteOrientation = 'HV') {
-  const route = orthogonalRoute(start, cursor, orientation);
+// Live preview: draw the given route (pre-computed) or fall back to orthogonal
+export function drawPreviewWire(ctx: CanvasRenderingContext2D, start: Point, cursor: Point, orientation: LRouteOrientation = 'HV', route?: Point[]) {
+  if (!route) route = orthogonalRoute(start, cursor, orientation);
   ctx.strokeStyle = '#888';
   ctx.lineWidth = 1.2;
   ctx.setLineDash([5, 4]);
@@ -578,20 +834,21 @@ export function drawAlignmentGuides(
   viewH: number,
   panX: number,
   panY: number,
+  zoom = 1,
 ) {
   ctx.save();
   ctx.strokeStyle = '#ff3b30';
-  ctx.lineWidth = 0.8;
-  ctx.setLineDash([4, 4]);
+  ctx.lineWidth = 0.8 / zoom;
+  ctx.setLineDash([4 / zoom, 4 / zoom]);
   for (const g of guides) {
     ctx.beginPath();
     if (g.x !== undefined) {
-      ctx.moveTo(g.x, -panY);
-      ctx.lineTo(g.x, viewH - panY);
+      ctx.moveTo(g.x, -panY / zoom);
+      ctx.lineTo(g.x, (viewH - panY) / zoom);
     }
     if (g.y !== undefined) {
-      ctx.moveTo(-panX, g.y);
-      ctx.lineTo(viewW - panX, g.y);
+      ctx.moveTo(-panX / zoom, g.y);
+      ctx.lineTo((viewW - panX) / zoom, g.y);
     }
     ctx.stroke();
   }
@@ -661,9 +918,100 @@ export function drawSnapHint(ctx: CanvasRenderingContext2D, p: Point) {
   ctx.stroke();
 }
 
+// Find all strictly interior wire-segment crossings (one horizontal × one vertical).
+// Returns each crossing once, noting which wire is horizontal (draws the arc).
+export function findWireCrossings(wires: Wire[]): { p: Point; hWireId: string; vWireId: string }[] {
+  const result: { p: Point; hWireId: string; vWireId: string }[] = [];
+  for (let i = 0; i < wires.length; i++) {
+    for (let j = i + 1; j < wires.length; j++) {
+      const w1 = wires[i], w2 = wires[j];
+      for (let s1 = 0; s1 < w1.nodes.length - 1; s1++) {
+        const a1 = w1.nodes[s1], b1 = w1.nodes[s1 + 1];
+        const h1 = a1.y === b1.y, v1 = a1.x === b1.x;
+        if (!h1 && !v1) continue;
+        for (let s2 = 0; s2 < w2.nodes.length - 1; s2++) {
+          const a2 = w2.nodes[s2], b2 = w2.nodes[s2 + 1];
+          const h2 = a2.y === b2.y, v2 = a2.x === b2.x;
+          if (!h2 && !v2) continue;
+          if (h1 === h2) continue; // same direction, no crossing
+          // Assign horizontal / vertical
+          const [hA, hB, vA, vB, hId, vId] = h1
+            ? [a1, b1, a2, b2, w1.id, w2.id]
+            : [a2, b2, a1, b1, w2.id, w1.id];
+          const x = vA.x, y = hA.y;
+          if (
+            x > Math.min(hA.x, hB.x) && x < Math.max(hA.x, hB.x) &&
+            y > Math.min(vA.y, vB.y) && y < Math.max(vA.y, vB.y)
+          ) {
+            result.push({ p: { x, y }, hWireId: hId, vWireId: vId });
+          }
+        }
+      }
+    }
+  }
+  return result;
+}
+
+// Draw crossings: arc (hop) when not connected, filled dot when connected.
+// Also draws junction dots at T-junctions (wire endpoints meeting another wire's interior).
+export function drawWireCrossings(
+  ctx: CanvasRenderingContext2D,
+  wires: Wire[],
+  connectedKeys: Set<string>,
+) {
+  const crossings = findWireCrossings(wires);
+  const R = 5;
+
+  for (const { p } of crossings) {
+    const key = `${p.x},${p.y}`;
+    if (connectedKeys.has(key)) {
+      // Connected: filled dot
+      ctx.fillStyle = '#000';
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      // Not connected: white gap on horizontal wire, then arc over it
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 3.5;
+      ctx.beginPath();
+      ctx.moveTo(p.x - R, p.y);
+      ctx.lineTo(p.x + R, p.y);
+      ctx.stroke();
+      ctx.strokeStyle = '#000';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, R, Math.PI, 0, false);
+      ctx.stroke();
+    }
+  }
+
+  // T-junction dots: wire endpoint lies on another wire's segment interior
+  for (const w of wires) {
+    for (const endPt of [w.nodes[0], w.nodes[w.nodes.length - 1]]) {
+      for (const other of wires) {
+        if (other.id === w.id) continue;
+        for (let s = 0; s < other.nodes.length - 1; s++) {
+          const a = other.nodes[s], b = other.nodes[s + 1];
+          const isH = a.y === b.y;
+          const hit = isH
+            ? endPt.y === a.y && endPt.x > Math.min(a.x, b.x) && endPt.x < Math.max(a.x, b.x)
+            : a.x === b.x && endPt.x === a.x && endPt.y > Math.min(a.y, b.y) && endPt.y < Math.max(a.y, b.y);
+          if (hit) {
+            ctx.fillStyle = '#000';
+            ctx.beginPath();
+            ctx.arc(endPt.x, endPt.y, 3.5, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+      }
+    }
+  }
+}
+
 export function hitTestComponent(c: CircuitComponent, p: Point): boolean {
   const dx = GRID * 2.2;
-  const dy = GRID * 1.2;
+  const dy = c.type === 'transistor' ? GRID * 1.7 : c.type === 'ground' ? GRID * 2.2 : GRID * 1.2;
   const cos = Math.cos((-c.rotation * Math.PI) / 180);
   const sin = Math.sin((-c.rotation * Math.PI) / 180);
   const lx = (p.x - c.x) * cos - (p.y - c.y) * sin;
@@ -671,21 +1019,63 @@ export function hitTestComponent(c: CircuitComponent, p: Point): boolean {
   return Math.abs(lx) <= dx && Math.abs(ly) <= dy;
 }
 
-export function getTerminal(c: CircuitComponent, terminal: 0 | 1): Point {
-  const localX = terminal === 0 ? -GRID * 2 : GRID * 2;
+// Returns the number of connectable terminals for a given component type.
+export function getTerminalCount(type: CircuitComponent['type']): number {
+  if (type === 'potentiometer') return 3;
+  if (type === 'transformer') return 4;
+  if (type === 'transistor') return 3;
+  if (type === 'relay') return 4;
+  if (type === 'ground') return 1;
+  return 2;
+}
+
+// Local (unrotated) position of a terminal relative to component center.
+function terminalLocalPos(type: CircuitComponent['type'], terminal: number): Point {
+  switch (type) {
+    case 'potentiometer':
+      if (terminal === 0) return { x: -GRID * 2, y: 0 };
+      if (terminal === 1) return { x: GRID * 2, y: 0 };
+      return { x: 0, y: -GRID * 1.1 }; // wiper
+    case 'transformer':
+      if (terminal === 0) return { x: -GRID * 2, y: -GRID };
+      if (terminal === 1) return { x: -GRID * 2, y: GRID };
+      if (terminal === 2) return { x: GRID * 2, y: -GRID };
+      return { x: GRID * 2, y: GRID };
+    case 'ground':
+      return { x: 0, y: -GRID * 2 };
+    case 'relay':
+      if (terminal === 0) return { x: -GRID * 2, y: -GRID };
+      if (terminal === 1) return { x: -GRID * 2, y: GRID };
+      if (terminal === 2) return { x: GRID * 2, y: -GRID };
+      return { x: GRID * 2, y: GRID };
+    case 'transistor':
+      if (terminal === 0) return { x: -GRID * 2, y: 0 };        // base
+      if (terminal === 1) return { x: GRID * 2, y: -GRID * 1.5 }; // collector
+      return { x: GRID * 2, y: GRID * 1.5 };                      // emitter
+    default:
+      return { x: terminal === 0 ? -GRID * 2 : GRID * 2, y: 0 };
+  }
+}
+
+export function getTerminal(c: CircuitComponent, terminal: number): Point {
+  const local = terminalLocalPos(c.type, terminal);
   const cos = Math.cos((c.rotation * Math.PI) / 180);
   const sin = Math.sin((c.rotation * Math.PI) / 180);
-  return { x: c.x + localX * cos, y: c.y + localX * sin };
+  return {
+    x: c.x + local.x * cos - local.y * sin,
+    y: c.y + local.x * sin + local.y * cos,
+  };
 }
 
 export function findTerminalNear(
   components: CircuitComponent[],
   p: Point,
   tolerance: number,
-): { componentId: string; terminal: 0 | 1; point: Point } | null {
-  let best: { componentId: string; terminal: 0 | 1; point: Point; d: number } | null = null;
+): { componentId: string; terminal: number; point: Point } | null {
+  let best: { componentId: string; terminal: number; point: Point; d: number } | null = null;
   for (const c of components) {
-    for (const t of [0, 1] as const) {
+    const count = getTerminalCount(c.type);
+    for (let t = 0; t < count; t++) {
       const tp = getTerminal(c, t);
       const d = Math.hypot(tp.x - p.x, tp.y - p.y);
       if (d <= tolerance && (!best || d < best.d)) {
@@ -717,7 +1107,42 @@ export function findWireNodeNear(
   return best ? { wireId: best.wireId, nodeIndex: best.nodeIndex, point: best.point } : null;
 }
 
-// Combined snap target lookup
+// Snap to an arbitrary point on a wire segment (mid-segment T-junction).
+// Returns the grid-snapped interior point on the closest axis-aligned segment.
+function findWireSegmentNear(
+  wires: Wire[],
+  p: Point,
+  tolerance: number,
+  excludeWireId?: string,
+): { wireId: string; segmentIndex: number; point: Point } | null {
+  let best: { wireId: string; segmentIndex: number; point: Point; d: number } | null = null;
+  for (const w of wires) {
+    if (w.id === excludeWireId) continue;
+    for (let i = 0; i < w.nodes.length - 1; i++) {
+      const a = w.nodes[i], b = w.nodes[i + 1];
+      const isH = a.y === b.y, isV = a.x === b.x;
+      if (!isH && !isV) continue;
+      // Compute closest point on segment
+      let pt: Point;
+      if (isH) {
+        const x = snap(Math.max(Math.min(a.x, b.x), Math.min(Math.max(a.x, b.x), p.x)));
+        pt = { x, y: a.y };
+      } else {
+        const y = snap(Math.max(Math.min(a.y, b.y), Math.min(Math.max(a.y, b.y), p.y)));
+        pt = { x: a.x, y };
+      }
+      // Skip if snapped to either endpoint (those are handled by findWireNodeNear)
+      if ((pt.x === a.x && pt.y === a.y) || (pt.x === b.x && pt.y === b.y)) continue;
+      const d = Math.hypot(p.x - pt.x, p.y - pt.y);
+      if (d <= tolerance && (!best || d < best.d)) {
+        best = { wireId: w.id, segmentIndex: i, point: pt, d };
+      }
+    }
+  }
+  return best ? { wireId: best.wireId, segmentIndex: best.segmentIndex, point: best.point } : null;
+}
+
+// Combined snap target lookup: terminal → wire node → wire segment mid-point
 export function findSnapTarget(
   components: CircuitComponent[],
   wires: Wire[],
@@ -732,6 +1157,10 @@ export function findSnapTarget(
   const wn = findWireNodeNear(wires, p, tolerance, excludeWireId);
   if (wn) {
     return { attach: { kind: 'wire', wireId: wn.wireId, nodeIndex: wn.nodeIndex }, point: wn.point };
+  }
+  const ws = findWireSegmentNear(wires, p, tolerance, excludeWireId);
+  if (ws) {
+    return { attach: { kind: 'wire-segment', wireId: ws.wireId, segmentIndex: ws.segmentIndex, point: ws.point }, point: ws.point };
   }
   return null;
 }

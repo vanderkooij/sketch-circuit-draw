@@ -24,6 +24,13 @@ const en: Dict = {
   'tool.potentiometer': 'Potentiometer (drag to canvas)',
   'tool.fuse': 'Fuse (drag to canvas)',
   'tool.transformer': 'Transformer (drag to canvas)',
+  'tool.transistor': 'NPN Transistor — Base / Collector / Emitter (drag to canvas)',
+  'tool.ntc': 'NTC Thermistor — resistance decreases with temperature (drag to canvas)',
+  'tool.ptc': 'PTC Thermistor — resistance increases with temperature (drag to canvas)',
+  'tool.ldr': 'LDR / Light sensor — resistance decreases with light (drag to canvas)',
+  'tool.pushbutton': 'Push button — double-click to press (drag to canvas)',
+  'tool.buzzer': 'Buzzer / piezo (drag to canvas)',
+  'tool.relay': 'Relay — coil (left) and switch contacts (right) (drag to canvas)',
   'tool.wire': 'Wire (W)',
   'tool.text': 'Text',
   'tool.delete': 'Delete',
@@ -34,7 +41,7 @@ const en: Dict = {
   'group.meters': 'Meters',
   'group.advanced': 'Advanced',
   'btn.undo': 'Undo (Ctrl+Z)',
-  'btn.redo': 'Redo (Ctrl+Shift+Z)',
+  'btn.redo': 'Redo (Ctrl+Y / Ctrl+Shift+Z)',
   'btn.reset': 'Reset',
   'btn.resetConfirm': 'Clear the entire canvas?',
   'btn.more': 'More…',
@@ -47,9 +54,31 @@ const en: Dict = {
   'status.select.empty': 'Drag components from the toolbar · Double-click = new label · Esc = select tool · Alt+drag = pan · W = wire',
   'status.text': 'Click to place a label · Use ₁₂₃ ₜₒₜ ᵥ Ω for notation',
   'status.delete': 'Click an element to remove it',
+  'status.place': 'Click to place · Esc to stop placing',
   // Label editor
   'label.placeholder': 'R₁, U₂, Ω...',
   'label.quickInsert': 'Quick insert:',
+  // Context menu
+  'menu.copy': 'Copy',
+  'menu.cut': 'Cut',
+  'menu.paste': 'Paste',
+  'menu.duplicate': 'Duplicate',
+  'menu.delete': 'Delete',
+  'menu.rotate': 'Rotate',
+  // Help panel
+  'btn.help': 'Help (F1)',
+  'help.title': 'Help',
+  'help.close': 'Close',
+  // File operations
+  'btn.file': 'File',
+  'btn.save': 'Save (Ctrl+S)',
+  'btn.load': 'Open…',
+  'btn.exportPng': 'Export PNG',
+  'btn.exportSvg': 'Export SVG',
+  'msg.unsaved': 'Unsaved changes will be lost. Continue?',
+  'msg.loadError': 'Could not load file: {error}',
+  // Mobile
+  'mobile.banner': 'Read-only view. Open on a computer to edit.',
 };
 
 const nl: Dict = {
@@ -70,6 +99,13 @@ const nl: Dict = {
   'tool.potentiometer': 'Potmeter (sleep naar canvas)',
   'tool.fuse': 'Zekering (sleep naar canvas)',
   'tool.transformer': 'Transformator (sleep naar canvas)',
+  'tool.transistor': 'NPN Transistor — Basis / Collector / Emitter (sleep naar canvas)',
+  'tool.ntc': 'NTC Thermistor — weerstand daalt bij hogere temperatuur (sleep naar canvas)',
+  'tool.ptc': 'PTC Thermistor — weerstand stijgt bij hogere temperatuur (sleep naar canvas)',
+  'tool.ldr': 'LDR / Lichtgevoelige weerstand — weerstand daalt bij meer licht (sleep naar canvas)',
+  'tool.pushbutton': 'Drukknop — dubbelklik om in te drukken (sleep naar canvas)',
+  'tool.buzzer': 'Zoemer / piëzo (sleep naar canvas)',
+  'tool.relay': 'Relais — spoel (links) en schakelcontacten (rechts) (sleep naar canvas)',
   'tool.wire': 'Draad (W)',
   'tool.text': 'Tekst',
   'tool.delete': 'Verwijderen',
@@ -79,7 +115,7 @@ const nl: Dict = {
   'group.meters': 'Meters',
   'group.advanced': 'Geavanceerd',
   'btn.undo': 'Ongedaan maken (Ctrl+Z)',
-  'btn.redo': 'Opnieuw (Ctrl+Shift+Z)',
+  'btn.redo': 'Opnieuw (Ctrl+Y / Ctrl+Shift+Z)',
   'btn.reset': 'Wissen',
   'btn.resetConfirm': 'Het hele canvas wissen?',
   'btn.more': 'Meer…',
@@ -91,8 +127,30 @@ const nl: Dict = {
   'status.select.empty': 'Sleep componenten uit de toolbar · Dubbelklik = nieuw tekstvak · Esc = select tool · Alt+drag = pan · W = wire',
   'status.text': 'Klik om label te plaatsen · Gebruik ₁₂₃ ₜₒₜ ᵥ Ω voor notatie',
   'status.delete': 'Klik op een element om het te verwijderen',
+  'status.place': 'Klik om te plaatsen · Esc om te stoppen',
   'label.placeholder': 'R₁, U₂, Ω...',
   'label.quickInsert': 'Snel invoegen:',
+  // Context menu
+  'menu.copy': 'Kopiëren',
+  'menu.cut': 'Knippen',
+  'menu.paste': 'Plakken',
+  'menu.duplicate': 'Dupliceren',
+  'menu.delete': 'Verwijderen',
+  'menu.rotate': 'Roteren',
+  // Help panel
+  'btn.help': 'Help (F1)',
+  'help.title': 'Help',
+  'help.close': 'Sluiten',
+  // File operations
+  'btn.file': 'Bestand',
+  'btn.save': 'Opslaan (Ctrl+S)',
+  'btn.load': 'Openen…',
+  'btn.exportPng': 'PNG exporteren',
+  'btn.exportSvg': 'SVG exporteren',
+  'msg.unsaved': 'Niet-opgeslagen wijzigingen gaan verloren. Doorgaan?',
+  'msg.loadError': 'Bestand kon niet worden geladen: {error}',
+  // Mobile
+  'mobile.banner': 'Alleen-lezen weergave. Open op een computer om te bewerken.',
 };
 
 const dicts: Record<Lang, Dict> = { en, nl };

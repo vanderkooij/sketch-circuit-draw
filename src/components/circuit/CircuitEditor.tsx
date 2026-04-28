@@ -1,20 +1,32 @@
-import { useRef, useState, useCallback, useEffect } from 'react';
+import { useRef, useState, useReducer, useCallback, useEffect } from 'react';
 import type { CircuitState, Tool, Point, CircuitComponent, Wire, TextLabel, WireAttachment, ComponentType, LRouteOrientation } from './types';
 import { GRID, snap, snapPoint, uid, orthogonalRoute, inferOrientation } from './types';
 import {
   clearCanvas, drawComponent, drawWire, drawLabel, drawPreviewWire, drawSnapHint,
-  drawAlignmentGuides, drawDistanceLabels,
+  drawAlignmentGuides, drawDistanceLabels, drawWireCrossings, findWireCrossings,
   hitTestComponent, hitTestWire, hitTestWireNode, hitTestLabel,
-  getTerminal, findSnapTarget,
+  getTerminal, getTerminalCount, findSnapTarget,
 } from './renderer';
 import { Toolbar } from './Toolbar';
+import { HelpPanel } from './HelpPanel';
+import { MobileToolbar } from './MobileToolbar';
 import { t as tr, type Lang } from './i18n';
+import { downloadJSON, loadFromJSON, exportPNG } from './io';
+import { exportSVG } from './svgExport';
 
-const EMPTY: CircuitState = { components: [], wires: [], labels: [] };
+const EMPTY: CircuitState = { components: [], wires: [], labels: [], connectedCrossings: [] };
 
 const SNAP_TOL = 12;
 const ALIGN_TOL = 6;
 const DISTRIBUTE_TOL = 8;
+const TOOLBAR_H = 52;
+
+const COMPONENT_TYPES = new Set<Tool>([
+  'voltage', 'voltage_ac', 'resistor', 'led', 'motor', 'lamp',
+  'ammeter', 'voltmeter', 'capacitor', 'inductor', 'switch', 'diode', 'ground',
+  'potentiometer', 'fuse', 'transformer', 'transistor',
+  'ntc', 'ptc', 'ldr', 'pushbutton', 'buzzer', 'relay',
+]);
 
 export interface AlignGuide { x?: number; y?: number }
 
@@ -109,52 +121,247 @@ function cleanupWireNodes(nodes: Point[]): Point[] {
   return out;
 }
 
+// Approximate body bounding box for a component — the physical part wires must avoid.
+// Uses terminal positions shrunk inward so the terminal connection points themselves
+// are outside the box (wires may start/end there).
+type BBox = { x1: number; y1: number; x2: number; y2: number };
+
+function getCompBodyBBox(comp: CircuitComponent): BBox | null {
+  const count = getTerminalCount(comp.type);
+  if (count <= 1) return null; // ground etc.: no body to avoid
+  const t0 = getTerminal(comp, 0), t1 = getTerminal(comp, 1);
+  const dx = Math.abs(t1.x - t0.x), dy = Math.abs(t1.y - t0.y);
+  // Body in the main axis is 70% of the half-span; perpendicular thickness = 0.5 GRID
+  const PERP = GRID * 0.5;
+  if (dx >= dy) {
+    return {
+      x1: comp.x - dx * 0.35, y1: comp.y - PERP,
+      x2: comp.x + dx * 0.35, y2: comp.y + PERP,
+    };
+  }
+  return {
+    x1: comp.x - PERP, y1: comp.y - dy * 0.35,
+    x2: comp.x + PERP, y2: comp.y + dy * 0.35,
+  };
+}
+
+function segmentIntersectsBBox(a: Point, b: Point, bbox: BBox): boolean {
+  if (a.y === b.y) {
+    // Horizontal segment: blocked if y is strictly inside bbox and x ranges overlap
+    const minX = Math.min(a.x, b.x), maxX = Math.max(a.x, b.x);
+    return a.y > bbox.y1 && a.y < bbox.y2 && maxX > bbox.x1 && minX < bbox.x2;
+  }
+  if (a.x === b.x) {
+    // Vertical segment
+    const minY = Math.min(a.y, b.y), maxY = Math.max(a.y, b.y);
+    return a.x > bbox.x1 && a.x < bbox.x2 && maxY > bbox.y1 && minY < bbox.y2;
+  }
+  return false;
+}
+
+// Route from → to avoiding all component bodies.
+// Tries user's orient (spacebar), then the other, then a grid-search detour.
+function routeAvoiding(
+  from: Point,
+  to: Point,
+  components: CircuitComponent[],
+  orient: LRouteOrientation,
+): Point[] {
+  if (from.x === to.x && from.y === to.y) return [from, to];
+  const bboxes = components.map(c => getCompBodyBBox(c)).filter((b): b is BBox => b !== null);
+
+  const routeOk = (nodes: Point[]) => {
+    for (let i = 0; i < nodes.length - 1; i++) {
+      for (const bbox of bboxes) {
+        if (segmentIntersectsBBox(nodes[i], nodes[i + 1], bbox)) return false;
+      }
+    }
+    return true;
+  };
+
+  const r1 = orthogonalRoute(from, to, orient);
+  if (routeOk(r1)) return r1;
+
+  const r2 = orthogonalRoute(from, to, orient === 'HV' ? 'VH' : 'HV');
+  if (routeOk(r2)) return r2;
+
+  // Search for a detour by trying waypoints offset from the midpoint
+  const mid = { x: snap((from.x + to.x) / 2), y: snap((from.y + to.y) / 2) };
+  for (let d = 1; d <= 6; d++) {
+    for (const [wdx, wdy] of [[0, GRID * d], [0, -GRID * d], [GRID * d, 0], [-GRID * d, 0]] as [number, number][]) {
+      const wp = { x: mid.x + wdx, y: mid.y + wdy };
+      for (const o of ['HV', 'VH'] as LRouteOrientation[]) {
+        const s1 = orthogonalRoute(from, wp, o);
+        const s2 = orthogonalRoute(wp, to, o);
+        const candidate = cleanupWireNodes([...s1, ...s2.slice(1)]);
+        if (routeOk(candidate)) return candidate;
+      }
+    }
+  }
+  return r1; // best effort
+}
+
+// Snap a newly-placed component so that a terminal aligns with a nearby component terminal.
+function snapCompToTerminals(comp: CircuitComponent, others: CircuitComponent[]): CircuitComponent {
+  const count = getTerminalCount(comp.type);
+  let best: { dist: number; dx: number; dy: number } | null = null;
+  for (let t = 0; t < count; t++) {
+    const tp = getTerminal(comp, t);
+    for (const other of others) {
+      const otherCount = getTerminalCount(other.type);
+      for (let ot = 0; ot < otherCount; ot++) {
+        const otp = getTerminal(other, ot);
+        const d = Math.hypot(tp.x - otp.x, tp.y - otp.y);
+        if (d > 0 && d <= SNAP_TOL && (!best || d < best.dist))
+          best = { dist: d, dx: otp.x - tp.x, dy: otp.y - tp.y };
+      }
+    }
+  }
+  return best ? { ...comp, x: comp.x + best.dx, y: comp.y + best.dy } : comp;
+}
+
 // Resolve the world-space point an attachment refers to
 function resolveAttach(s: CircuitState, a: WireAttachment): Point | null {
   if (a.kind === 'component') {
     const c = s.components.find(c => c.id === a.componentId);
     if (!c) return null;
     return getTerminal(c, a.terminal);
-  } else {
+  } else if (a.kind === 'wire') {
     const w = s.wires.find(w => w.id === a.wireId);
     if (!w || a.nodeIndex >= w.nodes.length) return null;
     return w.nodes[a.nodeIndex];
+  } else {
+    // wire-segment: transient, stored point is the junction position
+    return a.point;
   }
 }
 
-// Reconcile wire endpoints with their attached components/wires.
-// Iterate to a fixed point so wire→wire chains propagate.
+// Route start → waypoints → end, each segment avoiding component bodies.
+function routeThroughWaypoints(
+  start: Point,
+  end: Point,
+  waypoints: Point[],
+  components: CircuitComponent[],
+  orient: LRouteOrientation,
+): Point[] {
+  const pts = [start, ...waypoints, end];
+  const result: Point[] = [];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const seg = routeAvoiding(pts[i], pts[i + 1], components, orient);
+    if (result.length === 0) result.push(...seg);
+    else result.push(...seg.slice(1));
+  }
+  return result;
+}
+
+// Convert a transient wire-segment attachment into a real wire-node attachment by
+// inserting a new node into the parent wire at the segment snap point.
+// All existing nodeIndex references to that wire at indices >= insertIdx are shifted.
+function materializeAttach(
+  wires: Wire[],
+  attach: WireAttachment | undefined,
+): { wires: Wire[]; attach: WireAttachment | undefined } {
+  if (!attach || attach.kind !== 'wire-segment') return { wires, attach };
+  const { wireId, segmentIndex, point } = attach;
+  const parentIdx = wires.findIndex(w => w.id === wireId);
+  if (parentIdx === -1) return { wires, attach: undefined };
+  const parent = wires[parentIdx];
+  const insertIdx = segmentIndex + 1;
+  const newNodes = [
+    ...parent.nodes.slice(0, insertIdx),
+    { ...point },
+    ...parent.nodes.slice(insertIdx),
+  ];
+  const newWires = wires.map((w, i) => {
+    if (i === parentIdx) return { ...parent, nodes: newNodes };
+    // Shift nodeIndex references in other wires that point past the insertion
+    let u = w;
+    if (u.startAttach?.kind === 'wire' && u.startAttach.wireId === wireId && u.startAttach.nodeIndex >= insertIdx)
+      u = { ...u, startAttach: { ...u.startAttach, nodeIndex: u.startAttach.nodeIndex + 1 } };
+    if (u.endAttach?.kind === 'wire' && u.endAttach.wireId === wireId && u.endAttach.nodeIndex >= insertIdx)
+      u = { ...u, endAttach: { ...u.endAttach, nodeIndex: u.endAttach.nodeIndex + 1 } };
+    return u;
+  });
+  return { wires: newWires, attach: { kind: 'wire', wireId, nodeIndex: insertIdx } };
+}
+
+// Reconcile wire endpoints and propagate junction positions.
+// Iterates to a fixed point so wire→wire chains propagate (up to 4 passes).
+// Junction nodes (intermediate nodes that other wires attach to) are treated as
+// mandatory waypoints so T-branches move correctly when components are dragged.
 function syncWires(s: CircuitState): CircuitState {
   let cur = s;
   for (let iter = 0; iter < 4; iter++) {
     let changed = false;
+
+    // Build junction map: for each wire, which of its intermediate nodes have branches
+    const wireJunctions = new Map<string, { oldIdx: number; pos: Point }[]>();
+    for (const w of cur.wires) {
+      for (const a of [w.startAttach, w.endAttach] as (WireAttachment | undefined)[]) {
+        if (a?.kind !== 'wire') continue;
+        const parent = cur.wires.find(pw => pw.id === a.wireId);
+        if (!parent) continue;
+        const idx = a.nodeIndex;
+        if (idx <= 0 || idx >= parent.nodes.length - 1) continue; // skip endpoints
+        if (!wireJunctions.has(a.wireId)) wireJunctions.set(a.wireId, []);
+        const jArr = wireJunctions.get(a.wireId)!;
+        if (!jArr.some(j => j.oldIdx === idx))
+          jArr.push({ oldIdx: idx, pos: { ...parent.nodes[idx] } });
+      }
+    }
+
+    // Track how junction indices change after rerouting (wireId → oldIdx → newIdx)
+    const junctionNewIdx = new Map<string, Map<number, number>>();
+
     const wires = cur.wires.map(w => {
-      const newNodes = [...w.nodes];
-      if (w.startAttach) {
-        const p = resolveAttach(cur, w.startAttach);
-        if (p && (newNodes[0]?.x !== p.x || newNodes[0]?.y !== p.y)) {
-          const end = newNodes[newNodes.length - 1];
-          const orient = inferOrientation(newNodes);
-          const route = orthogonalRoute(p, end, orient);
-          newNodes.splice(0, newNodes.length, ...route);
-          changed = true;
+      const junctions = (wireJunctions.get(w.id) ?? []).sort((a, b) => a.oldIdx - b.oldIdx);
+      const junctionPositions = junctions.map(j => j.pos);
+
+      const startP = w.startAttach ? resolveAttach(cur, w.startAttach) : null;
+      const endP   = w.endAttach   ? resolveAttach(cur, w.endAttach)   : null;
+      const curStart = w.nodes[0];
+      const curEnd   = w.nodes[w.nodes.length - 1];
+
+      const startMoved = startP && (curStart.x !== startP.x || curStart.y !== startP.y);
+      const endMoved   = endP   && (curEnd.x   !== endP.x   || curEnd.y   !== endP.y);
+      if (!startMoved && !endMoved) return w;
+
+      const newStart = startP ?? curStart;
+      const newEnd   = endP   ?? curEnd;
+      const orient   = inferOrientation(w.nodes);
+
+      const route = routeThroughWaypoints(newStart, newEnd, junctionPositions, cur.components, orient);
+
+      // Record new nodeIndex for each junction so dependent wires can be updated
+      if (junctions.length > 0) {
+        if (!junctionNewIdx.has(w.id)) junctionNewIdx.set(w.id, new Map());
+        const idxMap = junctionNewIdx.get(w.id)!;
+        for (const j of junctions) {
+          const newIdx = route.findIndex(n => n.x === j.pos.x && n.y === j.pos.y);
+          if (newIdx !== -1) idxMap.set(j.oldIdx, newIdx);
         }
       }
-      if (w.endAttach) {
-        const p = resolveAttach(cur, w.endAttach);
-        const li = newNodes.length - 1;
-        if (p && (newNodes[li]?.x !== p.x || newNodes[li]?.y !== p.y)) {
-          const start = newNodes[0];
-          const orient = inferOrientation(newNodes);
-          const route = orthogonalRoute(start, p, orient);
-          newNodes.splice(0, newNodes.length, ...route);
-          changed = true;
-        }
-      }
-      return changed ? { ...w, nodes: newNodes } : w;
+
+      changed = true;
+      return { ...w, nodes: route };
     });
+
+    // Update nodeIndex references in wires that attach to rerouted wires' junctions
+    const updatedWires = wires.map(w => {
+      let u = w;
+      if (u.startAttach?.kind === 'wire') {
+        const newIdx = junctionNewIdx.get(u.startAttach.wireId)?.get(u.startAttach.nodeIndex);
+        if (newIdx !== undefined) u = { ...u, startAttach: { ...u.startAttach, nodeIndex: newIdx } };
+      }
+      if (u.endAttach?.kind === 'wire') {
+        const newIdx = junctionNewIdx.get(u.endAttach.wireId)?.get(u.endAttach.nodeIndex);
+        if (newIdx !== undefined) u = { ...u, endAttach: { ...u.endAttach, nodeIndex: newIdx } };
+      }
+      return u;
+    });
+
     if (!changed) break;
-    cur = { ...cur, wires };
+    cur = { ...cur, wires: updatedWires };
   }
   return cur;
 }
@@ -180,12 +387,235 @@ function hitTestWireSegment(w: Wire, p: Point): number | null {
   return null;
 }
 
+// Connect wire endpoints that land on component terminals after placement.
+function autoConnect(st: CircuitState, comp: CircuitComponent): CircuitState {
+  const count = getTerminalCount(comp.type);
+  const wires = st.wires.map(w => {
+    if (w.nodes.length < 2) return w;
+    let { startAttach, endAttach } = w;
+    const sp = w.nodes[0], ep = w.nodes[w.nodes.length - 1];
+    for (let t = 0; t < count; t++) {
+      const tp = getTerminal(comp, t);
+      if (!startAttach && Math.hypot(sp.x - tp.x, sp.y - tp.y) <= SNAP_TOL)
+        startAttach = { kind: 'component', componentId: comp.id, terminal: t };
+      if (!endAttach && Math.hypot(ep.x - tp.x, ep.y - tp.y) <= SNAP_TOL)
+        endAttach = { kind: 'component', componentId: comp.id, terminal: t };
+    }
+    return startAttach !== w.startAttach || endAttach !== w.endAttach
+      ? { ...w, startAttach, endAttach }
+      : w;
+  });
+  return { ...st, wires };
+}
+
+// Create connecting wires between terminals of newComp that coincide with terminals of other components.
+function wireOverlappingTerminals(st: CircuitState, newComp: CircuitComponent): CircuitState {
+  const count = getTerminalCount(newComp.type);
+  const newWires: Wire[] = [];
+  for (let t = 0; t < count; t++) {
+    const tp = getTerminal(newComp, t);
+    for (const other of st.components) {
+      if (other.id === newComp.id) continue;
+      const otherCount = getTerminalCount(other.type);
+      for (let ot = 0; ot < otherCount; ot++) {
+        const otp = getTerminal(other, ot);
+        if (Math.hypot(tp.x - otp.x, tp.y - otp.y) > 1) continue;
+        // Skip if already connected via a wire
+        const already = st.wires.some(w =>
+          (w.startAttach?.kind === 'component' && w.startAttach.componentId === newComp.id && w.startAttach.terminal === t &&
+           w.endAttach?.kind === 'component' && w.endAttach.componentId === other.id && w.endAttach.terminal === ot) ||
+          (w.endAttach?.kind === 'component' && w.endAttach.componentId === newComp.id && w.endAttach.terminal === t &&
+           w.startAttach?.kind === 'component' && w.startAttach.componentId === other.id && w.startAttach.terminal === ot)
+        );
+        if (!already) {
+          newWires.push({
+            id: uid(),
+            nodes: [{ ...tp }, { ...tp }],
+            startAttach: { kind: 'component', componentId: newComp.id, terminal: t },
+            endAttach: { kind: 'component', componentId: other.id, terminal: ot },
+          });
+        }
+      }
+    }
+  }
+  return newWires.length ? { ...st, wires: [...st.wires, ...newWires] } : st;
+}
+
+// Try to split any axis-aligned segment of a wire when a 2-terminal component is dropped on it.
+// Returns new state + adjusted component, or null if no split applies.
+function trySplitWire(
+  st: CircuitState,
+  comp: CircuitComponent,
+  p: Point,
+): { state: CircuitState; comp: CircuitComponent } | null {
+  if (getTerminalCount(comp.type) !== 2) return null;
+  for (const w of st.wires) {
+    for (let si = 0; si < w.nodes.length - 1; si++) {
+      const a = w.nodes[si], b = w.nodes[si + 1];
+      const isH = a.y === b.y;
+      const isV = a.x === b.x;
+      if (!isH && !isV) continue;
+      if (distToSegmentFull(p, a, b) > SNAP_TOL * 2) continue;
+
+      const minX = Math.min(a.x, b.x), maxX = Math.max(a.x, b.x);
+      const minY = Math.min(a.y, b.y), maxY = Math.max(a.y, b.y);
+
+      // Segment must be long enough to fit the component (terminal span = GRID*4)
+      if (isH && (maxX - minX) < GRID * 4) continue;
+      if (isV && (maxY - minY) < GRID * 4) continue;
+
+      const rotation: 0 | 90 = isH ? 0 : 90;
+      // Clamp center to valid range so terminals stay within segment bounds
+      const cx = isH ? Math.max(minX + GRID * 2, Math.min(maxX - GRID * 2, snap(p.x))) : a.x;
+      const cy = isH ? a.y : Math.max(minY + GRID * 2, Math.min(maxY - GRID * 2, snap(p.y)));
+      const newComp: CircuitComponent = { ...comp, x: cx, y: cy, rotation };
+      const t0 = getTerminal(newComp, 0);
+      const t1 = getTerminal(newComp, 1);
+
+      // Which terminal is closer to a?
+      const tA = Math.hypot(t0.x - a.x, t0.y - a.y) < Math.hypot(t1.x - a.x, t1.y - a.y) ? 0 : 1;
+      const tB = tA === 0 ? 1 : 0;
+      const ptA = getTerminal(newComp, tA);
+      const ptB = getTerminal(newComp, tB);
+
+      // Wire 1: nodes[0..si] + ptA (the first half up to the split point)
+      const wire1: Wire = {
+        id: uid(), nodes: [...w.nodes.slice(0, si + 1), ptA],
+        startAttach: w.startAttach,
+        endAttach: { kind: 'component', componentId: newComp.id, terminal: tA },
+      };
+      // Wire 2: ptB + nodes[si+1..end] (the second half from the split point)
+      const wire2: Wire = {
+        id: uid(), nodes: [ptB, ...w.nodes.slice(si + 1)],
+        startAttach: { kind: 'component', componentId: newComp.id, terminal: tB },
+        endAttach: w.endAttach,
+      };
+      const newWires = st.wires.filter(x => x.id !== w.id).concat(wire1, wire2);
+      return { state: { ...st, wires: newWires }, comp: newComp };
+    }
+  }
+  return null;
+}
+
+interface ClipboardData {
+  components: CircuitComponent[];
+  wires: Wire[];
+  labels: TextLabel[];
+  centerX: number;
+  centerY: number;
+}
+
+function buildClipboard(s: CircuitState, componentIds: Set<string>, labelIds: Set<string>): ClipboardData {
+  const components = s.components.filter(c => componentIds.has(c.id));
+  const labels = s.labels.filter(l => labelIds.has(l.id));
+  // Only include wires whose BOTH endpoints attach to selected components
+  const wires = s.wires.filter(w => {
+    const sa = w.startAttach, ea = w.endAttach;
+    return sa?.kind === 'component' && ea?.kind === 'component' &&
+      componentIds.has(sa.componentId) && componentIds.has(ea.componentId);
+  });
+  const xs = components.map(c => c.x);
+  const ys = components.map(c => c.y);
+  return {
+    components, wires, labels,
+    centerX: xs.length ? (Math.min(...xs) + Math.max(...xs)) / 2 : 0,
+    centerY: ys.length ? (Math.min(...ys) + Math.max(...ys)) / 2 : 0,
+  };
+}
+
+function applyPaste(
+  data: ClipboardData,
+  targetX: number,
+  targetY: number,
+  cur: CircuitState,
+): { next: CircuitState; newCompIds: string[]; newWireIds: string[]; newLabelIds: string[] } {
+  const dx = snap(targetX - data.centerX);
+  const dy = snap(targetY - data.centerY);
+  const idMap = new Map<string, string>();
+  for (const c of data.components) idMap.set(c.id, uid());
+
+  const newComponents = data.components.map(c => ({
+    ...c, id: idMap.get(c.id)!, x: snap(c.x + dx), y: snap(c.y + dy),
+  }));
+  const newLabels = data.labels.map(l => ({
+    ...l, id: uid(), x: snap(l.x + dx), y: snap(l.y + dy),
+  }));
+  const newWires = data.wires.map(w => ({
+    ...w, id: uid(),
+    nodes: w.nodes.map(n => ({ x: snap(n.x + dx), y: snap(n.y + dy) })),
+    startAttach: w.startAttach?.kind === 'component'
+      ? { ...w.startAttach, componentId: idMap.get(w.startAttach.componentId) ?? w.startAttach.componentId }
+      : w.startAttach,
+    endAttach: w.endAttach?.kind === 'component'
+      ? { ...w.endAttach, componentId: idMap.get(w.endAttach.componentId) ?? w.endAttach.componentId }
+      : w.endAttach,
+  }));
+
+  return {
+    next: {
+      ...cur,
+      components: [...cur.components, ...newComponents],
+      wires: [...cur.wires, ...newWires],
+      labels: [...cur.labels, ...newLabels],
+    },
+    newCompIds: newComponents.map(c => c.id),
+    newWireIds: newWires.map(w => w.id),
+    newLabelIds: newLabels.map(l => l.id),
+  };
+}
+
+const MAX_HIST = 100;
+
+interface HistoryState {
+  circuit: CircuitState;
+  past: CircuitState[];
+  future: CircuitState[];
+}
+
+type HistoryAction =
+  | { type: 'COMMIT'; payload: CircuitState }
+  | { type: 'SET_LIVE'; payload: CircuitState }
+  | { type: 'UNDO' }
+  | { type: 'REDO' }
+  | { type: 'LOAD'; payload: CircuitState };
+
+function historyReducer(s: HistoryState, action: HistoryAction): HistoryState {
+  switch (action.type) {
+    case 'COMMIT': {
+      const past = [...s.past, s.circuit].slice(-MAX_HIST);
+      return { circuit: action.payload, past, future: [] };
+    }
+    case 'SET_LIVE':
+      return { ...s, circuit: action.payload };
+    case 'UNDO': {
+      if (s.past.length === 0) return s;
+      const past = s.past.slice(0, -1);
+      const prev = s.past[s.past.length - 1];
+      return { circuit: prev, past, future: [s.circuit, ...s.future] };
+    }
+    case 'REDO': {
+      if (s.future.length === 0) return s;
+      const [next, ...future] = s.future;
+      return { circuit: next, past: [...s.past, s.circuit], future };
+    }
+    case 'LOAD': {
+      const past = s.past.length > 0 || s.circuit !== EMPTY
+        ? [...s.past, s.circuit].slice(-MAX_HIST)
+        : [];
+      return { circuit: action.payload, past, future: [] };
+    }
+  }
+}
+
+const INITIAL_HISTORY: HistoryState = { circuit: EMPTY, past: [], future: [] };
+
 export default function CircuitEditor() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [tool, setTool] = useState<Tool>('select');
-  const [state, setState] = useState<CircuitState>(EMPTY);
-  const [history, setHistory] = useState<CircuitState[]>([EMPTY]);
-  const [histIdx, setHistIdx] = useState(0);
+  const [hist, dispatch] = useReducer(historyReducer, INITIAL_HISTORY);
+  const state = hist.circuit;
+  const canUndo = hist.past.length > 0;
+  const canRedo = hist.future.length > 0;
   const [selection, setSelection] = useState<Selection>(null);
   const [dragging, setDragging] = useState(false);
   const [dragOffset, setDragOffset] = useState<Point>({ x: 0, y: 0 });
@@ -203,53 +633,229 @@ export default function CircuitEditor() {
   const [pan, setPan] = useState<Point>({ x: 0, y: 0 });
   const [panning, setPanning] = useState(false);
   const [panStart, setPanStart] = useState<Point>({ x: 0, y: 0 });
+  const [zoom, setZoom] = useState(1);
   const [alignGuides, setAlignGuides] = useState<AlignGuide[]>([]);
   const [distLabels, setDistLabels] = useState<DistanceLabel[]>([]);
+  // Rubber-band selection
+  const [rubberBand, setRubberBand] = useState<{ start: Point; end: Point } | null>(null);
+  // Multi-selection (from rubber-band or future clipboard)
+  const [multiSel, setMultiSel] = useState<{ componentIds: string[]; wireIds: string[]; labelIds: string[] } | null>(null);
+  // Multi-drag tracking
+  const [multiDragOffsets, setMultiDragOffsets] = useState<Map<string, { dx: number; dy: number }>>(new Map());
+  const [multiDragPrimaryStart, setMultiDragPrimaryStart] = useState<Point | null>(null);
+  const [multiDragWireNodes, setMultiDragWireNodes] = useState<Map<string, Point[]>>(new Map());
+  const [clipboard, setClipboard] = useState<ClipboardData | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [isDirty, setIsDirty] = useState(false);
+  const [filename, setFilename] = useState('circuit.json');
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768);
+  const [bannerDismissed, setBannerDismissed] = useState(false);
+  const isMobileRef = useRef(isMobile);
+  isMobileRef.current = isMobile;
+  // Refs so copy/paste callbacks can read latest values without stale closures
+  const mousePosRef = useRef<Point>({ x: 0, y: 0 });
+  mousePosRef.current = mousePos;
+  const clipboardRef = useRef<ClipboardData | null>(null);
+  clipboardRef.current = clipboard;
+  const stateRef = useRef<CircuitState>(state);
+  stateRef.current = state;
+  const selectionRef = useRef<typeof selection>(null);
+  selectionRef.current = selection;
+  const multiSelRef = useRef<typeof multiSel>(null);
+  multiSelRef.current = multiSel;
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
+  const panRef = useRef(pan);
+  panRef.current = pan;
   const [lang, setLang] = useState<Lang>(() => {
     if (typeof window === 'undefined') return 'en';
     const saved = window.localStorage?.getItem('circuit.lang');
     return (saved === 'nl' || saved === 'en') ? saved : 'en';
   });
+  const [helpOpen, setHelpOpen] = useState(false);
   useEffect(() => {
     if (typeof window !== 'undefined') window.localStorage?.setItem('circuit.lang', lang);
   }, [lang]);
 
   const commit = useCallback((next: CircuitState) => {
-    setState(next);
-    setHistory(h => [...h.slice(0, histIdx + 1), next]);
-    setHistIdx(i => i + 1);
-  }, [histIdx]);
+    dispatch({ type: 'COMMIT', payload: next });
+    setIsDirty(true);
+  }, []);
 
   const undo = useCallback(() => {
-    if (histIdx > 0) {
-      setHistIdx(i => i - 1);
-      setState(history[histIdx - 1]);
-      setSelection(null);
-      setWireStart(null);
-    }
-  }, [histIdx, history]);
+    dispatch({ type: 'UNDO' });
+    setSelection(null);
+    setWireStart(null);
+  }, []);
 
   const redo = useCallback(() => {
-    if (histIdx < history.length - 1) {
-      setHistIdx(i => i + 1);
-      setState(history[histIdx + 1]);
-      setSelection(null);
-      setWireStart(null);
-    }
-  }, [histIdx, history]);
+    dispatch({ type: 'REDO' });
+    setSelection(null);
+    setWireStart(null);
+  }, []);
 
   const reset = useCallback(() => {
     if (window.confirm(tr(lang, 'btn.resetConfirm'))) {
       commit(EMPTY);
+      setIsDirty(false);
       setSelection(null);
       setWireStart(null);
     }
   }, [commit, lang]);
 
+  const filenameRef = useRef(filename);
+  filenameRef.current = filename;
+
+  const handleSave = useCallback(() => {
+    downloadJSON(stateRef.current, zoomRef.current, panRef.current, filenameRef.current);
+    setIsDirty(false);
+  }, []);
+
+  const isDirtyRef = useRef(isDirty);
+  isDirtyRef.current = isDirty;
+  const langRef = useRef(lang);
+  langRef.current = lang;
+
+  const handleLoad = useCallback(() => {
+    if (isDirtyRef.current && !window.confirm(tr(langRef.current, 'msg.unsaved'))) return;
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json,application/json';
+    input.onchange = () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      setFilename(file.name);
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = loadFromJSON(reader.result as string);
+        if ('error' in result) {
+          alert(tr(langRef.current, 'msg.loadError', { error: result.error }));
+          return;
+        }
+        dispatch({ type: 'LOAD', payload: result.circuit });
+        setIsDirty(false);
+        setSelection(null);
+        setMultiSel(null);
+        setWireStart(null);
+        if (result.viewport) {
+          setZoom(result.viewport.zoom);
+          setPan({ x: result.viewport.panX, y: result.viewport.panY });
+        }
+      };
+      reader.readAsText(file);
+    };
+    document.body.appendChild(input);
+    input.click();
+    document.body.removeChild(input);
+  }, []);
+
+  const handleExportPNG = useCallback(() => {
+    exportPNG(stateRef.current);
+  }, []);
+
+  const handleExportSVG = useCallback(() => {
+    exportSVG(stateRef.current);
+  }, []);
+
+  // Clipboard helpers — read from refs so they stay stable across renders
+  const handleCopy = useCallback((): boolean => {
+    const sel = selectionRef.current;
+    const ms = multiSelRef.current;
+    const cIds = new Set<string>(ms?.componentIds ?? (sel?.kind === 'component' ? [sel.id] : []));
+    const lIds = new Set<string>(ms?.labelIds ?? []);
+    if (cIds.size === 0 && lIds.size === 0) return false;
+    const data = buildClipboard(stateRef.current, cIds, lIds);
+    clipboardRef.current = data;
+    setClipboard(data);
+    return true;
+  }, []);
+
+  const handlePaste = useCallback((targetX?: number, targetY?: number) => {
+    const cb = clipboardRef.current;
+    if (!cb) return;
+    const tx = targetX ?? mousePosRef.current.x;
+    const ty = targetY ?? mousePosRef.current.y;
+    const { next, newCompIds, newWireIds, newLabelIds } = applyPaste(cb, tx, ty, stateRef.current);
+    commit(next);
+    setMultiSel({ componentIds: newCompIds, wireIds: newWireIds, labelIds: newLabelIds });
+    setSelection(null);
+  }, [commit]);
+
+  const handleCut = useCallback(() => {
+    if (!handleCopy()) return;
+    // Read selection from refs (same snapshot as handleCopy used)
+    const sel = selectionRef.current;
+    const ms = multiSelRef.current;
+    const s = stateRef.current;
+    const next = { ...s };
+    if (ms) {
+      const cIds = new Set(ms.componentIds);
+      const wIds = new Set(ms.wireIds);
+      const lIds = new Set(ms.labelIds);
+      next.components = s.components.filter(c => !cIds.has(c.id));
+      next.wires = s.wires
+        .filter(w => !wIds.has(w.id))
+        .map(w => ({
+          ...w,
+          startAttach: w.startAttach?.kind === 'component' && cIds.has(w.startAttach.componentId) ? undefined : w.startAttach,
+          endAttach: w.endAttach?.kind === 'component' && cIds.has(w.endAttach.componentId) ? undefined : w.endAttach,
+        }));
+      next.labels = s.labels.filter(l => !lIds.has(l.id));
+    } else if (sel?.kind === 'component') {
+      next.components = s.components.filter(c => c.id !== sel.id);
+      next.wires = s.wires.map(w => ({
+        ...w,
+        startAttach: w.startAttach?.kind === 'component' && w.startAttach.componentId === sel.id ? undefined : w.startAttach,
+        endAttach: w.endAttach?.kind === 'component' && w.endAttach.componentId === sel.id ? undefined : w.endAttach,
+      }));
+    } else if (sel?.kind === 'wire') {
+      next.wires = s.wires.filter(w => w.id !== sel.id).map(w => ({
+        ...w,
+        startAttach: w.startAttach?.kind === 'wire' && w.startAttach.wireId === sel.id ? undefined : w.startAttach,
+        endAttach: w.endAttach?.kind === 'wire' && w.endAttach.wireId === sel.id ? undefined : w.endAttach,
+      }));
+    } else if (sel?.kind === 'label') {
+      next.labels = s.labels.filter(l => l.id !== sel.id);
+    } else return;
+    commit(next);
+    setSelection(null);
+    setMultiSel(null);
+  }, [handleCopy, commit]);
+
+  const handleDuplicate = useCallback(() => {
+    const sel = selectionRef.current;
+    const ms = multiSelRef.current;
+    const s = stateRef.current;
+    const cIds = new Set<string>(ms?.componentIds ?? (sel?.kind === 'component' ? [sel.id] : []));
+    const lIds = new Set<string>(ms?.labelIds ?? []);
+    if (cIds.size === 0 && lIds.size === 0) return;
+    const data = buildClipboard(s, cIds, lIds);
+    const { next, newCompIds, newWireIds, newLabelIds } = applyPaste(
+      data, data.centerX + GRID * 3, data.centerY + GRID * 3, s,
+    );
+    commit(next);
+    setMultiSel({ componentIds: newCompIds, wireIds: newWireIds, labelIds: newLabelIds });
+    setSelection(null);
+  }, [commit]);
+
   const canvasCoords = useCallback((clientX: number, clientY: number): Point => {
     const r = canvasRef.current!.getBoundingClientRect();
-    return { x: clientX - r.left - pan.x, y: clientY - r.top - pan.y };
-  }, [pan]);
+    return { x: (clientX - r.left - pan.x) / zoom, y: (clientY - r.top - pan.y) / zoom };
+  }, [pan, zoom]);
+
+  const zoomBy = useCallback((factor: number, cx?: number, cy?: number) => {
+    const canvas = canvasRef.current!;
+    const mx = cx ?? canvas.clientWidth / 2;
+    const my = cy ?? canvas.clientHeight / 2;
+    setZoom(z => {
+      const next = Math.max(0.25, Math.min(4, z * factor));
+      setPan(p => ({
+        x: mx - (mx - p.x) * (next / z),
+        y: my - (my - p.y) * (next / z),
+      }));
+      return next;
+    });
+  }, []);
 
   // Render
   useEffect(() => {
@@ -266,23 +872,51 @@ export default function CircuitEditor() {
     clearCanvas(ctx, w, h);
     ctx.save();
     ctx.translate(pan.x, pan.y);
+    ctx.scale(zoom, zoom);
+
+    // Compute rubber-band contents for live highlighting
+    let rbItems: { compIds: Set<string>; wireIds: Set<string>; labelIds: Set<string> } | null = null;
+    if (rubberBand) {
+      const rx1 = Math.min(rubberBand.start.x, rubberBand.end.x);
+      const ry1 = Math.min(rubberBand.start.y, rubberBand.end.y);
+      const rx2 = Math.max(rubberBand.start.x, rubberBand.end.x);
+      const ry2 = Math.max(rubberBand.start.y, rubberBand.end.y);
+      rbItems = { compIds: new Set(), wireIds: new Set(), labelIds: new Set() };
+      for (const c of state.components)
+        if (c.x >= rx1 && c.x <= rx2 && c.y >= ry1 && c.y <= ry2) rbItems.compIds.add(c.id);
+      for (const ww of state.wires)
+        if (ww.nodes.some(n => n.x >= rx1 && n.x <= rx2 && n.y >= ry1 && n.y <= ry2)) rbItems.wireIds.add(ww.id);
+      for (const l of state.labels)
+        if (l.x >= rx1 && l.x <= rx2 && l.y >= ry1 && l.y <= ry2) rbItems.labelIds.add(l.id);
+    }
+
+    const multiCompIds = new Set(multiSel?.componentIds ?? []);
+    const multiWireIds = new Set(multiSel?.wireIds ?? []);
+    const multiLabelIds = new Set(multiSel?.labelIds ?? []);
 
     state.wires.forEach(wire => {
-      const sel = selection?.kind === 'wire' && selection.id === wire.id;
-      drawWire(ctx, wire, sel, sel ? selection.node : null);
+      const sel = (selection?.kind === 'wire' && selection.id === wire.id) ||
+                  multiWireIds.has(wire.id) || (rbItems?.wireIds.has(wire.id) ?? false);
+      drawWire(ctx, wire, sel, (selection?.kind === 'wire' && selection.id === wire.id) ? selection.node : null);
     });
     state.components.forEach(comp => {
-      const sel = selection?.kind === 'component' && selection.id === comp.id;
+      const sel = (selection?.kind === 'component' && selection.id === comp.id) ||
+                  multiCompIds.has(comp.id) || (rbItems?.compIds.has(comp.id) ?? false);
       drawComponent(ctx, comp, sel);
     });
     state.labels.forEach(label => {
-      const sel = selection?.kind === 'label' && selection.id === label.id;
+      const sel = (selection?.kind === 'label' && selection.id === label.id) ||
+                  multiLabelIds.has(label.id) || (rbItems?.labelIds.has(label.id) ?? false);
       if (editingLabel !== label.id) drawLabel(ctx, label, sel);
     });
 
+    // Draw crossing arcs/dots after all wires so they render on top
+    drawWireCrossings(ctx, state.wires, new Set(state.connectedCrossings));
+
     if (tool === 'wire' && wireStart) {
       const endPoint = hoverSnap ?? snapPoint(mousePos);
-      drawPreviewWire(ctx, wireStart.point, endPoint, wireOrient);
+      const previewRoute = routeAvoiding(wireStart.point, endPoint, state.components, wireOrient);
+      drawPreviewWire(ctx, wireStart.point, endPoint, wireOrient, previewRoute);
     }
     if (hoverSnap && (tool === 'wire' || (dragging && selection?.kind === 'wire'))) {
       drawSnapHint(ctx, hoverSnap);
@@ -290,14 +924,29 @@ export default function CircuitEditor() {
     if (alignGuides.length > 0) {
       const cw = canvasRef.current!.clientWidth;
       const ch = canvasRef.current!.clientHeight;
-      drawAlignmentGuides(ctx, alignGuides, cw, ch, pan.x, pan.y);
+      drawAlignmentGuides(ctx, alignGuides, cw, ch, pan.x, pan.y, zoom);
     }
     if (distLabels.length > 0) {
       drawDistanceLabels(ctx, distLabels);
     }
 
+    // Rubber-band selection rectangle
+    if (rubberBand) {
+      const rx = Math.min(rubberBand.start.x, rubberBand.end.x);
+      const ry = Math.min(rubberBand.start.y, rubberBand.end.y);
+      const rw = Math.abs(rubberBand.end.x - rubberBand.start.x);
+      const rh = Math.abs(rubberBand.end.y - rubberBand.start.y);
+      ctx.fillStyle = 'rgba(37,99,235,0.07)';
+      ctx.fillRect(rx, ry, rw, rh);
+      ctx.strokeStyle = '#2563eb';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 3]);
+      ctx.strokeRect(rx, ry, rw, rh);
+      ctx.setLineDash([]);
+    }
+
     ctx.restore();
-  }, [state, selection, tool, wireStart, mousePos, hoverSnap, pan, editingLabel, dragging, wireOrient, alignGuides, distLabels]);
+  }, [state, selection, tool, wireStart, mousePos, hoverSnap, pan, zoom, editingLabel, dragging, wireOrient, alignGuides, distLabels, rubberBand, multiSel]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -306,17 +955,105 @@ export default function CircuitEditor() {
       canvas.style.width = '100%';
       canvas.style.height = '100%';
       setMousePos(p => ({ ...p }));
+      setIsMobile(window.innerWidth < 768);
     };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
   useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const r = canvas.getBoundingClientRect();
+      const mx = e.clientX - r.left;
+      const my = e.clientY - r.top;
+      const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+      setZoom(z => {
+        const next = Math.max(0.25, Math.min(4, z * factor));
+        setPan(p => ({
+          x: mx - (mx - p.x) * (next / z),
+          y: my - (my - p.y) * (next / z),
+        }));
+        return next;
+      });
+    };
+    canvas.addEventListener('wheel', handleWheel, { passive: false });
+    return () => canvas.removeEventListener('wheel', handleWheel);
+  }, []);
+
+  // Touch pan & pinch-to-zoom (works on any touch device, not only mobile)
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const state = { touches: [] as { id: number; x: number; y: number }[] };
+
+    const onTouchStart = (e: TouchEvent) => {
+      e.preventDefault();
+      state.touches = Array.from(e.touches).map(t => ({ id: t.identifier, x: t.clientX, y: t.clientY }));
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      e.preventDefault();
+      const cur = Array.from(e.touches).map(t => ({ id: t.identifier, x: t.clientX, y: t.clientY }));
+      const prev = state.touches;
+
+      if (cur.length === 1 && prev.length === 1) {
+        // One finger: pan
+        const dx = cur[0].x - prev[0].x;
+        const dy = cur[0].y - prev[0].y;
+        setPan(p => ({ x: p.x + dx, y: p.y + dy }));
+      } else if (cur.length === 2 && prev.length >= 2) {
+        // Two fingers: pinch-zoom + simultaneous pan
+        const r = canvas.getBoundingClientRect();
+        const prevDist = Math.hypot(prev[1].x - prev[0].x, prev[1].y - prev[0].y);
+        const curDist = Math.hypot(cur[1].x - cur[0].x, cur[1].y - cur[0].y);
+        const curMidX = (cur[0].x + cur[1].x) / 2 - r.left;
+        const curMidY = (cur[0].y + cur[1].y) / 2 - r.top;
+        const prevMidX = (prev[0].x + prev[1].x) / 2 - r.left;
+        const prevMidY = (prev[0].y + prev[1].y) / 2 - r.top;
+        if (prevDist > 0) {
+          const factor = curDist / prevDist;
+          setZoom(z => {
+            const next = Math.max(0.25, Math.min(4, z * factor));
+            setPan(p => ({
+              x: curMidX - (curMidX - p.x) * (next / z) + (curMidX - prevMidX),
+              y: curMidY - (curMidY - p.y) * (next / z) + (curMidY - prevMidY),
+            }));
+            return next;
+          });
+        }
+      }
+
+      state.touches = cur;
+    };
+
+    const onTouchEnd = (e: TouchEvent) => {
+      state.touches = Array.from(e.touches).map(t => ({ id: t.identifier, x: t.clientX, y: t.clientY }));
+    };
+
+    canvas.addEventListener('touchstart', onTouchStart, { passive: false });
+    canvas.addEventListener('touchmove', onTouchMove, { passive: false });
+    canvas.addEventListener('touchend', onTouchEnd, { passive: false });
+    return () => {
+      canvas.removeEventListener('touchstart', onTouchStart);
+      canvas.removeEventListener('touchmove', onTouchMove);
+      canvas.removeEventListener('touchend', onTouchEnd);
+    };
+  }, []);
+
+  useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
+      if (isMobileRef.current) return;
       if (editingLabel) return;
       if ((e.metaKey || e.ctrlKey) && e.key === 'z') {
         e.preventDefault();
         if (e.shiftKey) redo(); else undo();
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === 'y') {
+        e.preventDefault();
+        redo();
       }
       if (e.key === 'Delete' || e.key === 'Backspace') {
         if (selection) {
@@ -331,7 +1068,11 @@ export default function CircuitEditor() {
         setWireStart(null);
         setWireOrientLocked(false);
         setSelection(null);
+        setMultiSel(null);
+        setRubberBand(null);
         setTool('select');
+        setContextMenu(null);
+        setHelpOpen(false);
       }
       if (e.key === ' ' && tool === 'wire' && wireStart) {
         e.preventDefault();
@@ -353,7 +1094,78 @@ export default function CircuitEditor() {
     return () => window.removeEventListener('keydown', handleKey);
   }, [selection, editingLabel, undo, redo, tool, wireStart]);
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (isMobileRef.current) return;
+      if (editingLabel) return;
+      if (!(e.metaKey || e.ctrlKey)) return;
+      const k = e.key.toLowerCase();
+      if (k === 'c') { e.preventDefault(); handleCopy(); }
+      else if (k === 'x') { e.preventDefault(); handleCut(); }
+      else if (k === 'v') { e.preventDefault(); handlePaste(); }
+      else if (k === 'd' && !e.shiftKey) { e.preventDefault(); handleDuplicate(); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [editingLabel, handleCopy, handleCut, handlePaste, handleDuplicate]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (editingLabel) return;
+      if (e.key === 'F1') { e.preventDefault(); setHelpOpen(h => !h); }
+      if (e.key === '?' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        setHelpOpen(h => !h);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [editingLabel]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (editingLabel) return;
+      if (!(e.metaKey || e.ctrlKey)) return;
+      const k = e.key.toLowerCase();
+      if (k === 's') { e.preventDefault(); handleSave(); }
+      else if (k === 'o') { e.preventDefault(); handleLoad(); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [editingLabel, handleSave, handleLoad]);
+
+  useEffect(() => {
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (isDirtyRef.current) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, []);
+
   const deleteSelection = useCallback(() => {
+    if (multiSel) {
+      const cIds = new Set(multiSel.componentIds);
+      const wIds = new Set(multiSel.wireIds);
+      const lIds = new Set(multiSel.labelIds);
+      const next: CircuitState = {
+        components: state.components.filter(c => !cIds.has(c.id)),
+        wires: state.wires
+          .filter(w => !wIds.has(w.id))
+          .map(w => ({
+            ...w,
+            startAttach: w.startAttach?.kind === 'component' && cIds.has(w.startAttach.componentId) ? undefined : w.startAttach,
+            endAttach: w.endAttach?.kind === 'component' && cIds.has(w.endAttach.componentId) ? undefined : w.endAttach,
+          })),
+        labels: state.labels.filter(l => !lIds.has(l.id)),
+      };
+      commit(next);
+      setMultiSel(null);
+      setSelection(null);
+      return;
+    }
     if (!selection) return;
     const next = { ...state };
     if (selection.kind === 'component') {
@@ -377,7 +1189,7 @@ export default function CircuitEditor() {
     if (selection.kind === 'label') next.labels = state.labels.filter(l => l.id !== selection.id);
     commit(next);
     setSelection(null);
-  }, [selection, state, commit]);
+  }, [selection, multiSel, state, commit]);
 
   const rotateSelection = useCallback(() => {
     if (selection?.kind !== 'component') return;
@@ -391,6 +1203,8 @@ export default function CircuitEditor() {
   }, [selection, state, commit]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    if (isMobileRef.current) return;
+    if (contextMenu) { setContextMenu(null); return; }
     if (e.button === 1 || (e.button === 0 && e.altKey)) {
       setPanning(true);
       setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
@@ -401,6 +1215,32 @@ export default function CircuitEditor() {
     const p = canvasCoords(e.clientX, e.clientY);
     const sp = snapPoint(p);
     const ctx = canvasRef.current!.getContext('2d')!;
+
+    // Click-to-place component
+    if (COMPONENT_TYPES.has(tool)) {
+      let comp: CircuitComponent = { id: uid(), type: tool as ComponentType, x: sp.x, y: sp.y, rotation: 0 };
+
+      // Try wire-split first (same logic as drag-drop)
+      const split = trySplitWire(state, comp, p);
+      if (split) {
+        let next = wireOverlappingTerminals(
+          { ...split.state, components: [...split.state.components, split.comp] },
+          split.comp,
+        );
+        commit(next);
+        setSelection({ kind: 'component', id: split.comp.id });
+        setMultiSel(null);
+        return;
+      }
+
+      comp = snapCompToTerminals(comp, state.components);
+      let next = autoConnect({ ...state, components: [...state.components, comp] }, comp);
+      next = wireOverlappingTerminals(next, comp);
+      commit(next);
+      setSelection({ kind: 'component', id: comp.id });
+      setMultiSel(null);
+      return;
+    }
 
     if (tool === 'wire') {
       // Snap to terminal or wire-node, otherwise free point on grid
@@ -413,15 +1253,28 @@ export default function CircuitEditor() {
         setWireOrient('HV');
         setWireOrientLocked(false);
       } else {
-        // Second click — finalize wire as L-shape using current orientation
-        const route = orthogonalRoute(wireStart.point, point, wireOrient);
+        // Second click — materialize any wire-segment snaps (insert nodes), then finalize
+        let curWires = state.wires;
+        const matStart = materializeAttach(curWires, wireStart.attach);
+        curWires = matStart.wires;
+        const realSa = matStart.attach;
+
+        const matEnd = materializeAttach(curWires, attach);
+        curWires = matEnd.wires;
+        const realEa = matEnd.attach;
+
+        const route = routeThroughWaypoints(
+          wireStart.point, point, [],
+          state.components, wireOrient,
+        );
+
         const wire: Wire = {
           id: uid(),
           nodes: route,
-          startAttach: wireStart.attach,
-          endAttach: attach,
+          startAttach: realSa,
+          endAttach: realEa,
         };
-        commit({ ...state, wires: [...state.wires, wire] });
+        commit({ ...state, wires: [...curWires, wire] });
         setWireStart(null);
         setWireOrientLocked(false);
       }
@@ -474,13 +1327,45 @@ export default function CircuitEditor() {
       return;
     }
 
-    // Select tool (default) — also handles clicks while a component-tool is active
-    // (component placement is now drag&drop only)
+    // Toggle wire crossing (connected dot ↔ arc) when clicking near a crossing point
+    for (const cr of findWireCrossings(state.wires)) {
+      if (Math.hypot(p.x - cr.p.x, p.y - cr.p.y) < 8) {
+        const key = `${cr.p.x},${cr.p.y}`;
+        const cur = state.connectedCrossings ?? [];
+        const next = cur.includes(key) ? cur.filter(k => k !== key) : [...cur, key];
+        commit({ ...state, connectedCrossings: next });
+        return;
+      }
+    }
+
+    // Select tool
     for (const c of [...state.components].reverse()) {
       if (hitTestComponent(c, p)) {
         setSelection({ kind: 'component', id: c.id });
         setDragging(true);
         setDragOffset({ x: p.x - c.x, y: p.y - c.y });
+        // Start multi-drag if this component is part of multi-selection
+        if (multiSel?.componentIds.includes(c.id)) {
+          const offsets = new Map<string, { dx: number; dy: number }>();
+          for (const id of multiSel.componentIds) {
+            if (id === c.id) continue;
+            const mc = state.components.find(x => x.id === id);
+            if (mc) offsets.set(id, { dx: mc.x - c.x, dy: mc.y - c.y });
+          }
+          setMultiDragOffsets(offsets);
+          setMultiDragPrimaryStart({ x: c.x, y: c.y });
+          const wireNodeMap = new Map<string, Point[]>();
+          for (const wireId of multiSel.wireIds) {
+            const ww = state.wires.find(x => x.id === wireId);
+            if (ww && !ww.startAttach && !ww.endAttach)
+              wireNodeMap.set(wireId, ww.nodes.map(n => ({ ...n })));
+          }
+          setMultiDragWireNodes(wireNodeMap);
+        } else {
+          setMultiSel(null);
+          setMultiDragOffsets(new Map());
+          setMultiDragWireNodes(new Map());
+        }
         return;
       }
     }
@@ -532,15 +1417,29 @@ export default function CircuitEditor() {
         return;
       }
     }
-    setSelection(null);
-  }, [tool, state, canvasCoords, pan, commit, wireStart, wireOrient]);
+    // Nothing hit — start rubber-band selection (select tool only)
+    if (tool === 'select') {
+      setRubberBand({ start: p, end: p });
+      setMultiSel(null);
+      setSelection(null);
+    } else {
+      setSelection(null);
+    }
+  }, [tool, state, canvasCoords, pan, commit, wireStart, wireOrient, multiSel, contextMenu]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    if (isMobileRef.current) return;
     const p = canvasCoords(e.clientX, e.clientY);
     setMousePos(p);
 
     if (panning) {
       setPan({ x: e.clientX - panStart.x, y: e.clientY - panStart.y });
+      return;
+    }
+
+    // Update rubber-band
+    if (rubberBand) {
+      setRubberBand(rb => rb ? { ...rb, end: p } : null);
       return;
     }
 
@@ -574,18 +1473,38 @@ export default function CircuitEditor() {
       const aligned = alignToOthers({ x: rawX, y: rawY }, others);
       setAlignGuides(aligned.guides);
       setDistLabels(aligned.distances);
-      setState(prev => syncWires({
-        ...prev,
-        components: prev.components.map(c =>
-          c.id === selection.id ? { ...c, x: aligned.pos.x, y: aligned.pos.y } : c
-        ),
-      }));
+      if (multiDragOffsets.size > 0) {
+        // Multi-drag: move all selected components + free wires by the same delta
+        const dx = aligned.pos.x - (multiDragPrimaryStart?.x ?? 0);
+        const dy = aligned.pos.y - (multiDragPrimaryStart?.y ?? 0);
+        dispatch({ type: 'SET_LIVE', payload: syncWires({
+          ...stateRef.current,
+          components: stateRef.current.components.map(c => {
+            if (c.id === selection.id) return { ...c, x: aligned.pos.x, y: aligned.pos.y };
+            const off = multiDragOffsets.get(c.id);
+            if (off) return { ...c, x: aligned.pos.x + off.dx, y: aligned.pos.y + off.dy };
+            return c;
+          }),
+          wires: stateRef.current.wires.map(w => {
+            const startNodes = multiDragWireNodes.get(w.id);
+            if (startNodes) return { ...w, nodes: startNodes.map(n => ({ x: n.x + dx, y: n.y + dy })) };
+            return w;
+          }),
+        }) });
+      } else {
+        dispatch({ type: 'SET_LIVE', payload: syncWires({
+          ...stateRef.current,
+          components: stateRef.current.components.map(c =>
+            c.id === selection.id ? { ...c, x: aligned.pos.x, y: aligned.pos.y } : c
+          ),
+        }) });
+      }
     } else if (selection.kind === 'wire' && selection.node !== null) {
       const target = findSnapTarget(state.components, state.wires, p, SNAP_TOL, selection.id);
       const newPos = target ? target.point : sp;
-      setState(prev => ({
-        ...prev,
-        wires: prev.wires.map(w => {
+      dispatch({ type: 'SET_LIVE', payload: {
+        ...stateRef.current,
+        wires: stateRef.current.wires.map(w => {
           if (w.id !== selection.id) return w;
           const isStart = selection.node === 0;
           const isEnd = selection.node === w.nodes.length - 1;
@@ -602,16 +1521,16 @@ export default function CircuitEditor() {
           if (isEnd) next = { ...next, endAttach: target?.attach };
           return next;
         }),
-      }));
+      } });
     } else if (selection.kind === 'wire' && selection.segLeft !== undefined && selection.segRight !== undefined) {
       // Move the two segment endpoints perpendicular to the segment.
       // Helper nodes were already inserted at mousedown if start/end were attached,
       // so segLeft / segRight always point to free, movable nodes.
       const li = selection.segLeft;
       const ri = selection.segRight;
-      setState(prev => ({
-        ...prev,
-        wires: prev.wires.map(w => {
+      dispatch({ type: 'SET_LIVE', payload: {
+        ...stateRef.current,
+        wires: stateRef.current.wires.map(w => {
           if (w.id !== selection.id) return w;
           const a = w.nodes[li], b = w.nodes[ri];
           if (!a || !b) return w;
@@ -630,46 +1549,73 @@ export default function CircuitEditor() {
           }
           return { ...w, nodes };
         }),
-      }));
+      } });
     } else if (selection.kind === 'label') {
-      setState(prev => ({
-        ...prev,
-        labels: prev.labels.map(l =>
+      dispatch({ type: 'SET_LIVE', payload: {
+        ...stateRef.current,
+        labels: stateRef.current.labels.map(l =>
           l.id === selection.id ? { ...l, x: snap(p.x - dragOffset.x), y: snap(p.y - dragOffset.y) } : l
         ),
-      }));
+      } });
     }
-  }, [dragging, selection, canvasCoords, dragOffset, panning, panStart, tool, state.components, state.wires, hoverSnap, wireStart, wireOrientLocked]);
+  }, [dragging, selection, canvasCoords, dragOffset, panning, panStart, tool, state.components, state.wires, hoverSnap, wireStart, wireOrientLocked, rubberBand, multiDragOffsets, multiDragPrimaryStart, multiDragWireNodes]);
 
   const handleMouseUp = useCallback(() => {
+    if (isMobileRef.current) return;
     if (panning) {
       setPanning(false);
+      return;
+    }
+    // Finalize rubber-band selection
+    if (rubberBand) {
+      const rx1 = Math.min(rubberBand.start.x, rubberBand.end.x);
+      const ry1 = Math.min(rubberBand.start.y, rubberBand.end.y);
+      const rx2 = Math.max(rubberBand.start.x, rubberBand.end.x);
+      const ry2 = Math.max(rubberBand.start.y, rubberBand.end.y);
+      // Only activate if the band has meaningful size
+      if (rx2 - rx1 > 4 || ry2 - ry1 > 4) {
+        const componentIds = state.components
+          .filter(c => c.x >= rx1 && c.x <= rx2 && c.y >= ry1 && c.y <= ry2)
+          .map(c => c.id);
+        const wireIds = state.wires
+          .filter(w => w.nodes.some(n => n.x >= rx1 && n.x <= rx2 && n.y >= ry1 && n.y <= ry2))
+          .map(w => w.id);
+        const labelIds = state.labels
+          .filter(l => l.x >= rx1 && l.x <= rx2 && l.y >= ry1 && l.y <= ry2)
+          .map(l => l.id);
+        if (componentIds.length + wireIds.length + labelIds.length > 0) {
+          setMultiSel({ componentIds, wireIds, labelIds });
+        }
+      }
+      setRubberBand(null);
       return;
     }
     if (dragging) {
       setDragging(false);
       setAlignGuides([]);
       setDistLabels([]);
-      // After a wire-segment drag, simplify wires by removing collinear/duplicate nodes
+      setMultiDragOffsets(new Map());
+      setMultiDragPrimaryStart(null);
+      setMultiDragWireNodes(new Map());
       const cleaned: CircuitState = {
         ...state,
         wires: state.wires.map(w => ({ ...w, nodes: cleanupWireNodes(w.nodes) })),
       };
       commit(cleaned);
-      // Clear segment indices on selection so the next click recomputes them
       if (selection?.kind === 'wire' && selection.segment !== undefined) {
         setSelection({ kind: 'wire', id: selection.id, node: null, segment: null });
       }
     }
-  }, [dragging, state, commit, panning, selection]);
+  }, [dragging, state, commit, panning, selection, rubberBand]);
 
   const handleDoubleClick = useCallback((e: React.MouseEvent) => {
+    if (isMobileRef.current) return;
     const p = canvasCoords(e.clientX, e.clientY);
     const ctx = canvasRef.current!.getContext('2d')!;
 
     // Switches: toggle open/closed when double-clicked
     for (const c of state.components) {
-      if (c.type === 'switch' && hitTestComponent(c, p)) {
+      if ((c.type === 'switch' || c.type === 'pushbutton') && hitTestComponent(c, p)) {
         commit({
           ...state,
           components: state.components.map(x =>
@@ -726,13 +1672,24 @@ export default function CircuitEditor() {
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
-    if (selection?.kind === 'component') {
-      rotateSelection();
+    if (isMobileRef.current) return;
+    const p = canvasCoords(e.clientX, e.clientY);
+    // Auto-select component under cursor if not already selected
+    if (!multiSel && selection?.kind !== 'component') {
+      for (const c of [...state.components].reverse()) {
+        if (hitTestComponent(c, p)) {
+          setSelection({ kind: 'component', id: c.id });
+          setMultiSel(null);
+          break;
+        }
+      }
     }
-  }, [selection, rotateSelection]);
+    setContextMenu({ x: e.clientX, y: e.clientY });
+  }, [canvasCoords, selection, multiSel, state.components]);
 
   // ---- Drag & drop component placement ----
   const handleDragOver = useCallback((e: React.DragEvent) => {
+    if (isMobileRef.current) return;
     if (e.dataTransfer.types.includes('application/x-circuit-component')) {
       e.preventDefault();
       e.dataTransfer.dropEffect = 'copy';
@@ -740,6 +1697,7 @@ export default function CircuitEditor() {
   }, []);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
+    if (isMobileRef.current) return;
     const type = e.dataTransfer.getData('application/x-circuit-component') as ComponentType;
     if (!type) return;
     e.preventDefault();
@@ -747,9 +1705,23 @@ export default function CircuitEditor() {
     const sp = snapPoint(p);
     const aligned = alignToOthers(sp, state.components);
     const comp: CircuitComponent = { id: uid(), type, x: aligned.pos.x, y: aligned.pos.y, rotation: 0 };
-    commit({ ...state, components: [...state.components, comp] });
+
+    // Try wire-split first (2-terminal components on a straight wire)
+    const split = trySplitWire(state, comp, p);
+    if (split) {
+      commit({ ...split.state, components: [...split.state.components, split.comp] });
+      setTool('select');
+      setSelection({ kind: 'component', id: split.comp.id });
+      return;
+    }
+
+    // Otherwise snap to nearby terminals, then auto-connect
+    const snapped = snapCompToTerminals(comp, state.components);
+    let next = autoConnect({ ...state, components: [...state.components, snapped] }, snapped);
+    next = wireOverlappingTerminals(next, snapped);
+    commit(next);
     setTool('select');
-    setSelection({ kind: 'component', id: comp.id });
+    setSelection({ kind: 'component', id: snapped.id });
   }, [canvasCoords, commit, state]);
 
   const finishLabelEdit = useCallback(() => {
@@ -762,13 +1734,15 @@ export default function CircuitEditor() {
   }, [editingLabel, editText, state, commit]);
 
   const statusText = (() => {
+    if (COMPONENT_TYPES.has(tool)) return tr(lang, 'status.place');
     if (tool === 'wire' && wireStart) return tr(lang, 'status.wire.placing', { orient: wireOrient });
     if (tool === 'wire') return tr(lang, 'status.wire.start');
     if (tool === 'select' && selection?.kind === 'component') {
       const comp = state.components.find(c => c.id === selection.id);
-      return tr(lang, comp?.type === 'switch' ? 'status.select.switch' : 'status.select.component');
+      return tr(lang, (comp?.type === 'switch' || comp?.type === 'pushbutton') ? 'status.select.switch' : 'status.select.component');
     }
     if (tool === 'select' && selection?.kind === 'wire') return tr(lang, 'status.select.wire');
+    if (tool === 'select' && multiSel) return `${multiSel.componentIds.length + multiSel.wireIds.length + multiSel.labelIds.length} items geselecteerd · Delete = verwijderen · sleep om te verplaatsen`;
     if (tool === 'select') return tr(lang, 'status.select.empty');
     if (tool === 'text') return tr(lang, 'status.text');
     if (tool === 'delete') return tr(lang, 'status.delete');
@@ -777,20 +1751,33 @@ export default function CircuitEditor() {
 
   return (
     <div style={{ width: '100vw', height: '100vh', overflow: 'hidden', position: 'relative', background: '#fff' }}>
-      <Toolbar
-        tool={tool}
-        setTool={(t) => { setTool(t); setWireStart(null); setSelection(null); }}
-        onUndo={undo}
-        onRedo={redo}
-        onReset={reset}
-        canUndo={histIdx > 0}
-        canRedo={histIdx < history.length - 1}
-        lang={lang}
-        setLang={setLang}
-      />
+      {!isMobile && (
+        <Toolbar
+          tool={tool}
+          setTool={(t) => { setTool(t); setWireStart(null); setSelection(null); }}
+          onUndo={undo}
+          onRedo={redo}
+          onReset={reset}
+          canUndo={canUndo}
+          canRedo={canRedo}
+          lang={lang}
+          setLang={setLang}
+          helpOpen={helpOpen}
+          onHelpToggle={() => setHelpOpen(h => !h)}
+          onSave={handleSave}
+          onLoad={handleLoad}
+          onExportPNG={handleExportPNG}
+          onExportSVG={handleExportSVG}
+          isDirty={isDirty}
+        />
+      )}
       <canvas
         ref={canvasRef}
-        style={{ width: '100%', height: '100%', cursor: getCursor(tool, dragging, panning) }}
+        style={{
+          width: '100%', height: '100%',
+          cursor: isMobile ? 'default' : getCursor(tool, dragging, panning),
+          touchAction: 'none',
+        }}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
@@ -803,8 +1790,8 @@ export default function CircuitEditor() {
         <div
           style={{
             position: 'absolute',
-            left: editPos.x + pan.x,
-            top: editPos.y + pan.y + 44 - 10,
+            left: editPos.x * zoom + pan.x,
+            top: editPos.y * zoom + pan.y + TOOLBAR_H - 10,
             zIndex: 20,
           }}
         >
@@ -852,13 +1839,135 @@ export default function CircuitEditor() {
           </div>
         </div>
       )}
+      {/* Context menu — desktop only */}
+      {!isMobile && contextMenu && (() => {
+        const hasSelection = !!(selection?.kind === 'component' || selection?.kind === 'wire' || selection?.kind === 'label' || multiSel);
+        const MENU_W = 210, MENU_H = 230;
+        const mx = Math.min(contextMenu.x, window.innerWidth - MENU_W);
+        const my = Math.min(contextMenu.y, window.innerHeight - MENU_H);
+        const menuItem = (
+          label: string,
+          shortcut: string,
+          action: () => void,
+          enabled: boolean,
+        ) => (
+          <button
+            key={label}
+            onMouseDown={e => { e.preventDefault(); e.stopPropagation(); if (enabled) { action(); setContextMenu(null); } }}
+            style={{
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              width: '100%', padding: '6px 12px', border: 'none', background: 'none',
+              cursor: enabled ? 'pointer' : 'default', textAlign: 'left',
+              fontSize: 13, fontFamily: 'system-ui, sans-serif',
+              color: enabled ? '#1a1a1a' : '#bbb',
+              borderRadius: 4,
+            }}
+            onMouseEnter={e => { if (enabled) (e.currentTarget as HTMLElement).style.background = '#f0f0f0'; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'none'; }}
+          >
+            <span>{label}</span>
+            <span style={{ fontSize: 11, color: '#888', marginLeft: 16 }}>{shortcut}</span>
+          </button>
+        );
+        const divider = <div key="div" style={{ height: 1, background: '#e8e8e8', margin: '3px 0' }} />;
+        return (
+          <div
+            onMouseDown={e => e.stopPropagation()}
+            style={{
+              position: 'fixed', top: my, left: mx, zIndex: 200,
+              background: '#fff', border: '1px solid #d0d0d0',
+              borderRadius: 8, boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
+              padding: '4px 0', minWidth: MENU_W,
+            }}
+          >
+            {menuItem(tr(lang, 'menu.copy'), 'Ctrl+C', handleCopy, hasSelection)}
+            {menuItem(tr(lang, 'menu.cut'), 'Ctrl+X', handleCut, hasSelection)}
+            {divider}
+            {menuItem(tr(lang, 'menu.paste'), 'Ctrl+V', () => {
+              const r = canvasRef.current!.getBoundingClientRect();
+              const wx = (contextMenu.x - r.left - pan.x) / zoom;
+              const wy = (contextMenu.y - r.top - pan.y) / zoom;
+              handlePaste(wx, wy);
+            }, !!clipboard)}
+            {menuItem(tr(lang, 'menu.duplicate'), 'Ctrl+D', handleDuplicate, hasSelection)}
+            {divider}
+            {menuItem(tr(lang, 'menu.rotate'), 'R', rotateSelection, selection?.kind === 'component')}
+            {menuItem(tr(lang, 'menu.delete'), 'Delete', deleteSelection, hasSelection)}
+          </div>
+        );
+      })()}
+      {!isMobile && <HelpPanel open={helpOpen} onClose={() => setHelpOpen(false)} lang={lang} />}
+      {/* Zoom controls */}
       <div style={{
-        position: 'absolute', bottom: 8, left: 12, right: 12,
-        fontSize: 11, color: '#888', fontFamily: 'monospace',
-        pointerEvents: 'none', textAlign: 'center',
+        position: 'fixed', bottom: isMobile ? 64 : 8, right: 12,
+        display: 'flex', alignItems: 'center', gap: 2,
+        background: 'rgba(255,255,255,0.92)', border: '1px solid #e0e0e0',
+        borderRadius: 6, padding: '2px 6px', fontSize: 11,
+        fontFamily: 'monospace', userSelect: 'none',
       }}>
-        {statusText}
+        {!isMobile && (
+          <button
+            onClick={() => zoomBy(1 / 1.12)}
+            style={{ width: 20, height: 20, border: 'none', background: 'none', cursor: 'pointer', fontSize: 14, lineHeight: 1, color: '#444', padding: 0 }}
+            title="Zoom out"
+          >−</button>
+        )}
+        <span
+          onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}
+          style={{ minWidth: 36, textAlign: 'center', cursor: 'pointer', color: '#555', padding: isMobile ? '2px 4px' : 0 }}
+          title="Reset zoom"
+        >{Math.round(zoom * 100)}%</span>
+        {!isMobile && (
+          <button
+            onClick={() => zoomBy(1.12)}
+            style={{ width: 20, height: 20, border: 'none', background: 'none', cursor: 'pointer', fontSize: 14, lineHeight: 1, color: '#444', padding: 0 }}
+            title="Zoom in"
+          >+</button>
+        )}
       </div>
+      {/* Status bar — desktop only */}
+      {!isMobile && (
+        <div style={{
+          position: 'fixed', bottom: 8, left: 12, right: 120,
+          fontSize: 11, color: '#888', fontFamily: 'monospace',
+          pointerEvents: 'none', textAlign: 'center',
+        }}>
+          {statusText}
+        </div>
+      )}
+      {/* Mobile banner */}
+      {isMobile && !bannerDismissed && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, zIndex: 20,
+          background: '#fffbeb', borderBottom: '1px solid #fcd34d',
+          padding: '10px 14px 10px 16px',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+          fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+          fontSize: 13, color: '#92400e', lineHeight: 1.4,
+        }}>
+          <span>{tr(lang, 'mobile.banner')}</span>
+          <button
+            onClick={() => setBannerDismissed(true)}
+            style={{
+              flexShrink: 0, width: 28, height: 28, border: 'none',
+              background: 'rgba(0,0,0,0.08)', borderRadius: 14,
+              cursor: 'pointer', fontSize: 16, lineHeight: 1,
+              color: '#92400e', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+            aria-label="Dismiss"
+          >×</button>
+        </div>
+      )}
+      {/* Mobile toolbar */}
+      {isMobile && (
+        <MobileToolbar
+          lang={lang}
+          setLang={setLang}
+          onLoad={handleLoad}
+          onExportPNG={handleExportPNG}
+          onExportSVG={handleExportSVG}
+        />
+      )}
     </div>
   );
 }
@@ -867,6 +1976,7 @@ function getCursor(tool: Tool, dragging: boolean, panning: boolean): string {
   if (panning) return 'grabbing';
   if (dragging) return 'grabbing';
   if (tool === 'select') return 'default';
+  if (COMPONENT_TYPES.has(tool)) return 'crosshair';
   if (tool === 'delete') return 'crosshair';
   return 'crosshair';
 }
